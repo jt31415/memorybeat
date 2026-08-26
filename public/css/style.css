@@ -1,0 +1,1916 @@
+/* ==========================================================================
+   MemoryBeat
+   A late-night mixing console: cool near-black surfaces, warmth reserved for
+   the things that carry energy (levels, the clock, the answer). Colour is
+   semantic here, never decorative -- amber is time, green is solved, ember is
+   running out, and the twelve player hues mean identity and nothing else.
+   ========================================================================== */
+
+:root {
+  /* surfaces -- a blue-black cast so the warm accents have something to sit on */
+  --bg: #06070a;
+  --bg-lift: #0a0c11;
+  --panel: #0d1015;
+  --panel-2: #12161e;
+
+  --line: rgba(188, 204, 235, 0.12);
+  --line-strong: rgba(188, 204, 235, 0.26);
+
+  --text: #eef1f7;
+  --muted: rgba(226, 233, 246, 0.56);
+  --faint: rgba(226, 233, 246, 0.34);
+
+  /* accents */
+  --amber: #f7b93e;   /* the clock, the answer, the beat */
+  --ember: #ff6a3d;   /* peaks, and time nearly gone */
+  --good: #4be39b;    /* solved */
+  --bad: #ff5d6c;
+  /* The cool indigo of the bloom and the between-rounds ring lives in
+     visualizer.js, which is the only thing that paints it. */
+
+  --radius: 14px;
+  --radius-lg: 20px;
+
+  --display: "Bricolage Grotesque", "Archivo", "Segoe UI", sans-serif;
+  --body: "Archivo", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono: "Azeret Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Two atmospheres, layered: a cool wash from above and a warm ember low down,
+   so the black never reads as an empty div. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(90% 70% at 50% -15%, rgba(91, 124, 255, 0.16), transparent 62%),
+    radial-gradient(70% 55% at 50% 118%, rgba(247, 185, 62, 0.09), transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Fine grain over the gradients -- kills the banding you get on wide gamut
+   panels and gives the surfaces a bit of tooth. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.035;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: none; }
+
+::selection { background: var(--amber); color: #14100a; }
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.hidden { display: none !important; }
+
+/* ----------------------------------------------------------------- controls */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease),
+              transform 0.12s var(--ease), color 0.18s var(--ease);
+}
+.btn:hover { background: rgba(226, 233, 246, 0.07); border-color: rgba(226, 233, 246, 0.5); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn:disabled:hover { background: none; border-color: var(--line-strong); }
+
+.btn-primary {
+  background: var(--amber);
+  color: #17120a;
+  border-color: var(--amber);
+  box-shadow: 0 6px 24px -8px rgba(247, 185, 62, 0.55);
+}
+.btn-primary:hover {
+  background: #ffc858;
+  border-color: #ffc858;
+  color: #17120a;
+  box-shadow: 0 8px 28px -8px rgba(247, 185, 62, 0.7);
+}
+
+.btn-ghost { border-color: transparent; color: var(--muted); padding: 8px 12px; }
+.btn-ghost:hover { color: var(--text); background: rgba(226, 233, 246, 0.06); }
+
+.btn-block { width: 100%; }
+
+.field { display: block; margin-bottom: 18px; }
+.field > span,
+.label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 8px;
+}
+
+input[type="text"], input[type="password"], input[type="number"], input[type="url"] {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease);
+}
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="url"]:focus {
+  border-color: rgba(247, 185, 62, 0.55);
+  background: #161b24;
+  outline: none;
+}
+input::placeholder { color: rgba(226, 233, 246, 0.24); }
+
+.row { display: flex; gap: 14px; }
+.row > * { flex: 1; }
+
+.hint { color: var(--faint); font-size: 12.5px; margin: -10px 0 18px; }
+
+.error {
+  color: var(--bad);
+  font-size: 13.5px;
+  min-height: 20px;
+  margin-top: 4px;
+}
+.error:not(:empty)::before { content: "▲ "; font-size: 9px; vertical-align: 1px; }
+
+/* --------------------------------------------------------------------- menu */
+
+.shell {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* "safe" so a page too tall for the window overflows downwards and stays
+     reachable -- plain centring pushed the wordmark off the top edge with no
+     way to scroll up to it. */
+  justify-content: safe center;
+  padding: 40px 24px;
+}
+
+.brand { text-align: center; margin-bottom: 46px; }
+
+/* Sits under whichever view is open; margin-top:auto is deliberately absent so
+   it trails the content instead of being pinned to a scrolling shell's floor. */
+.credits {
+  margin: 40px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* With a setup panel open the wordmark stops being the hero: the panel is what
+   you came for, and a full-size brand above it pushed "Create room" off the
+   bottom of a laptop screen. */
+.shell.setup .brand { margin-bottom: 24px; }
+.shell.setup .eq,
+.shell.setup .brand p { display: none; }
+.shell.setup .brand h1 { font-size: clamp(26px, 3.4vw, 34px); }
+
+/* "Memory" in text, "Beat" in amber -- the split does the branding work so the
+   wordmark needs no logo. */
+.brand h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(38px, 8vw, 74px);
+  font-weight: 800;
+  font-variation-settings: "wdth" 100;
+  letter-spacing: -0.042em;
+  line-height: 0.94;
+}
+.brand h1 .beat {
+  color: var(--amber);
+  text-shadow: 0 0 44px rgba(247, 185, 62, 0.35);
+}
+.brand p {
+  margin: 14px auto 0;
+  max-width: 46ch;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+/* level meter above the wordmark: reads as a real meter, warm at the peaks */
+.eq {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  height: 30px;
+  margin-bottom: 22px;
+}
+.eq i {
+  width: 4px;
+  border-radius: 2px;
+  transform-origin: bottom;
+  background: linear-gradient(to top, rgba(226, 233, 246, 0.35), var(--amber) 72%, var(--ember));
+  animation: eq 1.15s ease-in-out infinite;
+}
+.eq i:nth-child(1) { height: 42%; animation-delay: -0.95s; }
+.eq i:nth-child(2) { height: 88%; animation-delay: -0.62s; }
+.eq i:nth-child(3) { height: 58%; animation-delay: -0.34s; }
+.eq i:nth-child(4) { height: 100%; animation-delay: -0.16s; }
+.eq i:nth-child(5) { height: 50%; }
+@keyframes eq {
+  0%, 100% { transform: scaleY(0.3); opacity: 0.5; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+.modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  width: min(760px, 100%);
+}
+
+.mode-card {
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+  padding: 30px 28px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: linear-gradient(165deg, rgba(226, 233, 246, 0.05), rgba(226, 233, 246, 0.012));
+  transition: border-color 0.22s var(--ease), transform 0.22s var(--ease),
+              background 0.22s var(--ease), box-shadow 0.22s var(--ease);
+}
+/* A warm bloom that only arrives on hover -- the card stays cool at rest. */
+.mode-card::after {
+  content: "";
+  position: absolute;
+  inset: -40% -20% auto -20%;
+  height: 140%;
+  background: radial-gradient(60% 60% at 50% 0%, rgba(247, 185, 62, 0.18), transparent 70%);
+  opacity: 0;
+  transition: opacity 0.28s var(--ease);
+  pointer-events: none;
+}
+.mode-card:hover {
+  border-color: rgba(247, 185, 62, 0.45);
+  transform: translateY(-3px);
+  box-shadow: 0 18px 44px -22px rgba(0, 0, 0, 0.9);
+}
+.mode-card:hover::after { opacity: 1; }
+.mode-card h2 {
+  margin: 0 0 8px;
+  font-family: var(--display);
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.mode-card p { margin: 0; color: var(--muted); font-size: 14px; }
+.mode-card .glyph {
+  display: block;
+  font-size: 24px;
+  margin-bottom: 16px;
+  color: var(--amber);
+  opacity: 0.85;
+}
+
+.panel {
+  /* Wide enough for the pack grid to make two columns. */
+  width: min(660px, 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--panel), var(--bg-lift));
+  padding: 30px;
+  box-shadow: 0 30px 70px -40px #000;
+}
+
+/* The setup panels have to fit the window, so the pack list gives up height
+   instead of the page scrolling. The floor is on the panel rather than on the
+   list itself: a squeezed panel would otherwise leave its own contents hanging
+   below its border, where a floored one just lets the shell scroll. */
+.shell > .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: min(560px, 100%);
+  max-height: 100%;
+}
+/* Fixed-size fields, and one list that takes whatever height is left: without
+   this the flex squeeze lands on whatever happens to be squeezable, and the
+   18px spacer above "Song pack" collapsed before the list did. */
+.shell > .panel > * { flex: none; }
+.shell > .panel > .packs {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Short window: the brand is the first thing to go. The panel names itself in
+   its own heading, so losing the wordmark costs nothing next to losing the
+   pack list or the button. */
+@media (max-height: 780px) {
+  .shell.setup { padding-top: 20px; padding-bottom: 20px; }
+  .shell.setup .brand { display: none; }
+}
+.panel h2 {
+  margin: 0 0 4px;
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.panel > .hint { margin-top: 0; margin-bottom: 24px; }
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+.panel-head h2 { flex: 1; margin: 0; }
+
+/* -------------------------------------------------------------------- packs */
+
+/* Two columns where there is room, and a bounded height that scrolls.
+   The catalogue moved from 3 hand-written packs to 11 generated ones; as an
+   uncapped single column that list ran to ~1300px, and even two columns pushed
+   the panel past a laptop screen. Capping it keeps "Start game" in view no
+   matter how many packs get added later.
+   The cap is an upper bound only: as the panel's one shrinkable part, the list
+   takes whatever is left after the rest of the panel, so the window height is
+   what actually decides its size. */
+/* The packs label and its running total share a line: several packs can be on
+   at once, so how many is the one thing the heading has to answer. */
+.pack-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pack-head .label { margin-bottom: 8px; }
+.pack-sum {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.packs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
+  gap: 10px;
+  margin-bottom: 22px;
+  max-height: min(46vh, 430px);
+  overflow-y: auto;
+  /* Room for the scrollbar so it never sits on top of a pack's border. */
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.packs::-webkit-scrollbar { width: 8px; }
+.packs::-webkit-scrollbar-track { background: transparent; }
+.packs::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.packs::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+
+.pack {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease);
+}
+.pack:hover { border-color: var(--line-strong); }
+.pack[aria-pressed="true"] {
+  border-color: rgba(247, 185, 62, 0.55);
+  background: rgba(247, 185, 62, 0.08);
+}
+.pack .icon {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  /* the icons are short text labels ("10s", "EDM"), not emoji */
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.pack[aria-pressed="true"] .icon {
+  background: var(--amber);
+  color: #17120a;
+  border-color: var(--amber);
+}
+.pack .meta { min-width: 0; }
+.pack .meta strong { display: block; font-size: 15px; font-weight: 600; }
+/* Two lines of blurb at most, so a wordy pack cannot make its row taller than
+   its neighbours in the grid. */
+.pack .meta .blurb {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.pack .meta .count {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.pack[aria-pressed="true"] .meta .count { color: var(--amber); }
+
+/* The lobby's switcher reuses these buttons. It is a plain block now -- the
+   scrolling lives one level up, on .lobby-config, so the grid can be its own
+   natural height instead of a window onto itself. */
+.pack-switch,
+.playlist-import {
+  width: 100%;
+  text-align: left;
+}
+
+/* Every host control in one scroller.
+   This used to be the pack list's job: it was the only thing in the box, so it
+   absorbed whatever height the window was short by and scrolled itself. Once
+   difficulty and the import box joined it, that shrink was split four ways and
+   the grid collapsed to a row and a half. Scrolling the whole block instead
+   gives the grid its full height back and keeps one scrollbar rather than
+   nesting two. */
+.lobby-config {
+  width: 100%;
+  /* Wider than the 660px the rest of the lobby uses, and for a layout reason
+     rather than taste: the pack grid fills at minmax(238px, 1fr), so 660px only
+     ever fits two columns and twelve packs become six rows. Past ~754px it
+     fits three, the grid loses a third of its height, and difficulty and the
+     import box come back above the fold instead of below it. */
+  max-width: 880px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  overflow-y: auto;
+  /* Being an explicit length rather than `auto` is what lets this shrink at all
+     inside the lobby's flex column. The value is a compromise found by
+     measuring: any larger and a 720px-tall window pushes "Start game" off the
+     bottom, which is the one thing in the lobby that must never need scrolling
+     to reach. So the config gives up height first and scrolls itself. */
+  min-height: min(280px, 38vh);
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.lobby-config::-webkit-scrollbar { width: 8px; }
+.lobby-config::-webkit-scrollbar-track { background: transparent; }
+.lobby-config::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.lobby-config::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: content-box;
+}
+
+/* Inside the scroller the grid is full height and scrolls with everything else,
+   so it must not keep the menu's own max-height or its second scrollbar. */
+.lobby-config .packs {
+  margin-bottom: 0;
+  max-height: none;
+  min-height: 0;
+  overflow: visible;
+  padding-right: 0;
+}
+/* The flex gap spaces the sections; the divider's own margins would double it. */
+.lobby-config .or-split { margin: 0; }
+.lobby-config .difficulty,
+.lobby-config .mode-switch { max-width: none; }
+
+/* A 720px-tall window cannot fit the lobby's furniture at full spacing -- title,
+   roster, playlist badge, settings line and the start block come to ~270px
+   before the config gets a pixel, and five 24px gaps add another 120. Rather
+   than let "Start game" slide under the fold, tighten the rhythm and lower the
+   config's floor; it scrolls, so it is the one thing that loses nothing real. */
+@media (max-height: 820px) {
+  .lobby { gap: 16px; }
+  .lobby-config { gap: 18px; min-height: min(230px, 32vh); }
+}
+
+/* ---------------------------------------------------------------- room page */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 5, 8, 0.88);
+  backdrop-filter: blur(10px);
+}
+
+.room-layout {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+.room-layout.solo { grid-template-columns: minmax(0, 1fr); }
+.room-layout.solo .sidebar { display: none; }
+
+/* min-height:0 matters as much as min-width:0 here: without it the grid row
+   grows to fit the tallest view and the whole page picks up a scrollbar
+   instead of the stage scrolling inside its own column. */
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px 26px 24px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 14px;
+  margin-bottom: 6px;
+}
+/* Nothing in the bar may wrap: a long pack name used to break onto four lines
+   and shove the volume and Leave controls off the side of the screen. */
+.topbar > * { flex: none; white-space: nowrap; }
+.topbar .mark {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.18s var(--ease);
+}
+.topbar .mark:hover { color: var(--text); }
+.topbar .mark b { color: var(--amber); font-weight: 800; }
+.topbar .code {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  font-size: 13px;
+}
+.topbar .sep { color: rgba(226, 233, 246, 0.2); }
+/* The pack name is the one thing here that may be arbitrarily long, so it is
+   the one thing allowed to shrink and ellipsise. */
+.topbar .meta {
+  color: var(--muted);
+  font-size: 13px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar .spacer { flex: 1 1 auto; min-width: 0; }
+
+/* ------------------------------------------------------------------- lobby */
+
+.lobby {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* "safe" so that a window too short for the lobby overflows downwards into
+     the stage's scroller instead of clipping the title off the top. */
+  justify-content: safe center;
+  gap: 24px;
+  text-align: center;
+  padding: 12px 0;
+}
+/* Only the config block may give up height; everything else keeps its own, or a
+   squeezed row ends up drawn on top of its neighbour. That block is also the
+   only thing worth shrinking -- it is the only one that can scroll. */
+.lobby > * { flex: none; }
+/* No min-height here: the explicit floor on .lobby-config is already enough to
+   override flex's default `min-height: auto` and let it shrink, and repeating a
+   0 here would win on specificity and wipe that floor out. */
+.lobby > .lobby-config { flex: 0 1 auto; }
+.lobby h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(25px, 4vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.code-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 16px 14px 22px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--panel), var(--bg-lift));
+}
+.code-badge .label { margin-bottom: 3px; }
+.code-badge .big {
+  font-family: var(--mono);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  padding-left: 4px;
+  color: var(--amber);
+}
+
+.roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  justify-content: center;
+  max-width: 620px;
+}
+/* Each chip is tinted with its player's own hue -- set inline as --hue. */
+.roster .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid color-mix(in srgb, var(--hue, #fff) 38%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hue, #fff) 11%, transparent);
+  color: var(--hue, var(--text));
+  font-size: 14px;
+  font-weight: 500;
+  animation: chip-in 0.32s var(--ease) both;
+}
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+}
+.roster .chip .host {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: #17120a;
+  background: var(--amber);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.roster .chip.away { opacity: 0.35; filter: saturate(0.3); }
+
+/* ------------------------------------------------------------- difficulty */
+
+/* Same 660px column as the pack switcher above it, so the two host controls
+   line up as one panel rather than two floating widgets. Its height is fixed:
+   the readout sits on the head row next to the label, which means a longer
+   band name cannot push the slider -- or Start game -- down the page. */
+.difficulty {
+  width: 100%;
+  max-width: 660px;
+  text-align: left;
+}
+.difficulty .diff-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.difficulty .label { margin-bottom: 0; }
+.difficulty .diff-read {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+.difficulty .diff-name { color: var(--amber); font-weight: 600; }
+.difficulty .diff-blurb { color: var(--faint); }
+.difficulty .diff-blurb:not(:empty)::before { content: " — "; }
+/* Wider and a touch taller than the volume slider in the topbar: this one is a
+   setting people deliberate over, not a nudge. */
+.difficulty input[type="range"] {
+  display: block;
+  width: 100%;
+  height: 4px;
+}
+.difficulty input[type="range"]::-webkit-slider-thumb { width: 16px; height: 16px; }
+.difficulty input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; }
+.difficulty input[type="range"]:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 6px;
+  border-radius: 999px;
+}
+.difficulty .diff-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 9px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ------------------------------------------------------------- answer mode */
+
+/* Two ways to answer, side by side in the same 660px column as the pack and
+   difficulty controls above it -- one more row of the host's console. */
+.mode-switch {
+  width: 100%;
+  max-width: 660px;
+  text-align: left;
+}
+.mode-switch .mode-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.mode-switch .label { margin-bottom: 0; }
+.mode-switch .mode-blurb {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--faint);
+}
+.mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.mode-opt {
+  display: block;
+  text-align: left;
+  padding: 11px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: rgba(226, 233, 246, 0.02);
+  color: var(--muted);
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease), color 0.18s var(--ease);
+}
+.mode-opt:hover { border-color: var(--line-strong); }
+.mode-opt b {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mode-opt span {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+.mode-opt[aria-pressed="true"] {
+  border-color: rgba(247, 185, 62, 0.55);
+  background: rgba(247, 185, 62, 0.07);
+}
+.mode-opt[aria-pressed="true"] b { color: var(--amber); }
+
+/* ------------------------------------------------------------ choice cards */
+
+/* Four songs, one of them the answer. Two columns so the row of cards stays
+   short enough to read at a glance with the clock still running -- a stacked
+   list of four made people scroll their eyes instead of the pack. */
+.choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: min(760px, 100%);
+  margin: 10px auto 0;
+}
+.choice {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 16px;
+  text-align: left;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: rgba(226, 233, 246, 0.03);
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease),
+              transform 0.18s var(--ease), opacity 0.3s var(--ease);
+}
+.choice .key {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--faint);
+  flex: none;
+}
+.choice .t {
+  min-width: 0;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.choice:not(:disabled):hover {
+  border-color: var(--amber);
+  background: rgba(247, 185, 62, 0.07);
+  transform: translateY(-1px);
+}
+.choice:disabled { cursor: default; }
+/* Locked in but not yet judged: the pick stays lit so it is obvious what was
+   chosen while everyone else is still deciding. */
+.choice.picked {
+  border-color: var(--amber);
+  background: rgba(247, 185, 62, 0.1);
+}
+.choices.locked .choice:not(.picked):not(.right):not(.wrong) { opacity: 0.4; }
+.choice.right {
+  border-color: rgba(75, 227, 155, 0.6);
+  background: rgba(75, 227, 155, 0.12);
+  opacity: 1;
+}
+.choice.right .t { color: var(--good); }
+.choice.wrong {
+  border-color: rgba(255, 93, 108, 0.5);
+  background: rgba(255, 93, 108, 0.09);
+  opacity: 1;
+}
+.choice.wrong .t { color: var(--bad); }
+
+.settings-line {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.settings-line b { color: var(--text); font-weight: 600; }
+
+/* ---------------------------------------------------------------- play area */
+
+.play {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Fixed height and tabular figures: swapping "Round 3 / 10" for "next round
+   in 4" must not nudge anything below it. */
+.round-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+.round-head .between { color: var(--amber); }
+
+.answer-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 12px 12px;
+  /* Centred and bounded: stretched across a wide stage the box read as an
+     empty banner with a small title lost in the middle of it. */
+  width: min(820px, 100%);
+  margin: 8px auto 0;
+  border-radius: var(--radius);
+  background: rgba(226, 233, 246, 0.03);
+  border: 1px solid var(--line);
+  transition: border-color 0.4s var(--ease), background 0.4s var(--ease);
+}
+.answer-slot.solved {
+  border-color: rgba(75, 227, 155, 0.35);
+  background: rgba(75, 227, 155, 0.05);
+}
+
+/* The blanked-out title: one box per character, skribbl style. Slots are a
+   FIXED width (not min-width) so revealing a letter can never re-flow the row
+   and shove the whole title sideways. */
+/* Words are the flex items and never break internally; the column gap is the
+   space between words. */
+.mask {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 10px 18px;
+  font-family: var(--mono);
+}
+.mask .word {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+}
+.mask .slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 38px;
+  padding-bottom: 3px;
+  font-size: 23px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text);
+  border-bottom: 3px solid rgba(226, 233, 246, 0.2);
+  transition: border-color 0.3s var(--ease), color 0.3s var(--ease);
+}
+/* A letter handed over by a hint glows amber: you were given it. */
+.mask .slot.shown {
+  border-bottom-color: var(--amber);
+  color: var(--amber);
+  animation: pop 0.34s var(--ease);
+}
+/* A title you earned goes green, all of it. */
+.mask.solved .slot,
+.mask.solved .slot.shown {
+  border-bottom-color: var(--good);
+  color: var(--good);
+}
+
+@keyframes pop {
+  0% { transform: translateY(5px) scale(0.86); opacity: 0.35; }
+  100% { transform: none; opacity: 1; }
+}
+
+/* Always occupies its line, so the artist hint arriving never grows the box
+   and pushes the visualiser down. */
+.mask-artist {
+  height: 19px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 0.35s var(--ease), transform 0.35s var(--ease);
+}
+.mask-artist.on { opacity: 1; transform: none; }
+
+/* ------------------------------------------------------------- visualiser */
+
+.viz-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 340px;
+  display: grid;
+  place-items: center;
+  margin: 8px 0 10px;
+}
+#viz { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.viz-center {
+  position: relative;
+  text-align: center;
+  pointer-events: none;
+  width: min(64%, 248px);
+}
+
+/* A fixed square that holds the clock during play and the artwork at reveal.
+   They cross-fade inside it, so the reveal changes nothing about the layout --
+   which also means the bars' clearance never jumps. */
+.viz-face {
+  position: relative;
+  width: 116px;
+  height: 116px;
+  margin: 0 auto;
+}
+.viz-face > * {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  transition: opacity 0.45s var(--ease), transform 0.45s var(--ease), filter 0.45s var(--ease);
+}
+
+.timer {
+  font-family: var(--mono);
+  font-size: 54px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  transition: color 0.3s linear, opacity 0.45s var(--ease), transform 0.45s var(--ease);
+}
+/* Last five seconds: the number itself catches fire. */
+.timer.urgent { color: var(--ember); animation: throb 0.9s ease-in-out infinite; }
+@keyframes throb {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.07); }
+}
+
+.art {
+  display: block;   /* wins over the .viz-face > * grid: this is a replaced box */
+  width: 100%;
+  height: 100%;
+  border-radius: 14px;
+  object-fit: cover;
+  border: 1px solid rgba(226, 233, 246, 0.16);
+  box-shadow: 0 18px 46px -14px rgba(0, 0, 0, 0.9),
+              0 0 0 6px rgba(247, 185, 62, 0.06);
+  opacity: 0;
+  transform: scale(0.82) rotate(-3deg);
+}
+/* Only swap the clock out for artwork when there IS artwork -- otherwise the
+   face would go empty, so the clock stays and turns into a note glyph. */
+.viz-center.reveal.has-art .art { opacity: 1; transform: none; }
+.viz-center.reveal.has-art .timer { opacity: 0; transform: scale(0.7); }
+.timer.glyph { color: var(--amber); font-size: 44px; opacity: 0.55; }
+
+/* Caption block is a fixed height too: two lines for a title plus one for the
+   artist, reserved whether or not there is anything in them yet. */
+.viz-caption {
+  height: 62px;
+  margin-top: 12px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+}
+.viz-caption .title {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.45s var(--ease) 0.08s, transform 0.45s var(--ease) 0.08s;
+}
+.viz-center.reveal .viz-caption .title { opacity: 1; transform: none; }
+.viz-caption .sub {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.3s var(--ease);
+}
+/* At reveal this stops being a status label and becomes an artist credit, so it
+   drops the mono/uppercase treatment. */
+.viz-center.reveal .viz-caption .sub {
+  font-family: var(--body);
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-size: 12.5px;
+}
+
+/* -------------------------------------------------------------- guess bar */
+
+.guess-bar {
+  display: flex;
+  gap: 10px;
+  max-width: 560px;
+  width: 100%;
+  margin: 12px auto 0;
+}
+.guess-bar input {
+  border-radius: 999px;
+  padding: 13px 20px;
+  font-size: 15px;
+}
+.guess-bar input:disabled { opacity: 0.4; }
+.guess-bar .btn { padding-left: 26px; padding-right: 26px; }
+
+/* Deliberately quiet and set apart from the guess box: giving up is always
+   available in a solo game, but it should never be the obvious thing to press.
+   The row keeps its height whether or not the button is showing -- fading one in
+   at the start of a round would otherwise shove the player up the page. Only
+   solo rooms have it at all, so nobody else pays for the space. */
+.skip-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+.room-layout:not(.solo) .skip-row { display: none; }
+.skip-row .btn-ghost {
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  /* visibility, not display: the space stays reserved either way. */
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.18s var(--ease);
+}
+.skip-row.on .btn-ghost { visibility: visible; opacity: 1; }
+
+.status-line {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 22px;
+  margin-top: 10px;
+}
+.status-line .good { color: var(--good); font-weight: 600; }
+.status-line .bad { color: var(--bad); }
+.status-line .warm { color: var(--amber); }
+
+/* ---------------------------------------------------------------- volume */
+
+.volume {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--faint);
+}
+.volume .mute {
+  padding: 4px;
+  line-height: 1;
+  font-size: 14px;
+  border-radius: 6px;
+  color: var(--faint);
+  transition: color 0.18s var(--ease);
+}
+.volume .mute:hover { color: var(--text); }
+.volume .mute.muted { color: var(--bad); }
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 88px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--line-strong);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--amber);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px; border: none; border-radius: 50%;
+  background: var(--amber); cursor: pointer;
+}
+
+/* --------------------------------------------------------------- sidebar */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(226, 233, 246, 0.022), rgba(226, 233, 246, 0.008));
+}
+
+.side-head {
+  padding: 15px 18px 9px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.side-head .spacer { flex: 1; }
+
+.scores {
+  max-height: 42%;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 14px;
+  /* the FLIP reorder animation drives this */
+  transition: transform 0.42s var(--ease), background 0.3s var(--ease);
+}
+.score-row.you {
+  background: rgba(226, 233, 246, 0.06);
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+.score-row .rank {
+  width: 18px;
+  font-family: var(--mono);
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.score-row .nm {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--hue, var(--text));
+  font-weight: 500;
+}
+.score-row .pts {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 13px;
+}
+.score-row .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(226, 233, 246, 0.18);
+  flex: none;
+  transition: background 0.3s var(--ease), box-shadow 0.3s var(--ease);
+}
+.score-row .dot.answered {
+  background: var(--good);
+  box-shadow: 0 0 0 3px rgba(75, 227, 155, 0.16);
+}
+.score-row.away { opacity: 0.38; filter: saturate(0.3); }
+/* A score that just went up gets a brief warm flash. */
+.score-row .pts.bumped { animation: bump 0.7s var(--ease); }
+@keyframes bump {
+  0% { color: var(--amber); transform: scale(1.32); }
+  100% { color: inherit; transform: none; }
+}
+
+/* ------------------------------------------------------------------- chat */
+
+.chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--line);
+}
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.chat-log::-webkit-scrollbar { width: 8px; }
+.chat-log::-webkit-scrollbar-track { background: transparent; }
+.chat-log::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.chat-log::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+
+.msg {
+  font-size: 13.5px;
+  word-break: break-word;
+  animation: msg-in 0.26s var(--ease) both;
+}
+@keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
+.msg .who { font-weight: 600; color: var(--hue, var(--text)); }
+
+.msg.private {
+  border-left: 2px solid var(--good);
+  padding: 3px 0 3px 9px;
+  background: rgba(75, 227, 155, 0.06);
+  border-radius: 0 6px 6px 0;
+}
+.msg .lock {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--good);
+  margin-left: 6px;
+  opacity: 0.8;
+}
+
+.msg.nudge {
+  color: var(--amber);
+  font-size: 12.5px;
+  border-left: 2px solid var(--amber);
+  padding: 3px 0 3px 9px;
+  background: rgba(247, 185, 62, 0.08);
+  border-radius: 0 6px 6px 0;
+}
+
+/* --- system messages, three tiers ---------------------------------------
+   The log has to separate housekeeping (joins, leaves) from the two things
+   people actually look for: who solved it, and what the song was. So the
+   quiet tier stays grey and small, a solve is a green ticket with the
+   solver's own colour and their time as a chip, and the answer is a full
+   card that breaks the column. */
+
+.msg.sysline {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: rgba(226, 233, 246, 0.3);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  padding: 1px 0;
+}
+.msg.sysline .glyph {
+  font-family: var(--mono);
+  font-size: 9px;
+  flex: none;
+  opacity: 0.7;
+}
+.msg.sysline .nm { color: var(--hue, inherit); opacity: 0.85; font-weight: 500; }
+
+.msg.solve {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 1px 0;
+  border-radius: 8px;
+  border: 1px solid rgba(75, 227, 155, 0.22);
+  background: linear-gradient(90deg, rgba(75, 227, 155, 0.13), rgba(75, 227, 155, 0.03));
+  font-size: 13px;
+  animation: solve-in 0.4s var(--ease) both;
+}
+@keyframes solve-in {
+  from { opacity: 0; transform: translateX(-8px); }
+}
+.msg.solve .tick {
+  flex: none;
+  width: 16px; height: 16px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--good);
+  color: #062315;
+  font-size: 9px;
+  font-weight: 800;
+}
+.msg.solve .nm {
+  font-weight: 600;
+  color: var(--hue, var(--text));
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.msg.solve .verb { color: rgba(226, 233, 246, 0.5); font-size: 12px; }
+.msg.solve .time {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--good);
+  background: rgba(75, 227, 155, 0.12);
+  border: 1px solid rgba(75, 227, 155, 0.24);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.msg.answer {
+  margin: 8px 0;
+  padding: 11px 13px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(247, 185, 62, 0.3);
+  background:
+    linear-gradient(180deg, rgba(247, 185, 62, 0.13), rgba(247, 185, 62, 0.03));
+  box-shadow: 0 8px 26px -18px rgba(247, 185, 62, 0.8);
+  animation: answer-in 0.45s var(--ease) both;
+}
+@keyframes answer-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+.msg.answer .kicker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 5px;
+}
+.msg.answer .kicker::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(247, 185, 62, 0.4), transparent);
+}
+.msg.answer .title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  color: var(--text);
+}
+.msg.answer .artist {
+  font-size: 12px;
+  color: rgba(226, 233, 246, 0.5);
+  margin-top: 2px;
+}
+
+.chat-mode-live {
+  font-family: var(--mono);
+  color: var(--amber);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  padding: 2px 7px;
+  border: 1px solid rgba(247, 185, 62, 0.45);
+  border-radius: 999px;
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(247, 185, 62, 0.28); }
+  50% { box-shadow: 0 0 0 4px rgba(247, 185, 62, 0); }
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+.chat-form input { border-radius: 999px; padding: 9px 14px; font-size: 14px; }
+.chat-note {
+  padding: 0 16px 8px;
+  font-size: 11.5px;
+  color: var(--good);
+  letter-spacing: 0.01em;
+}
+
+/* ------------------------------------------------------------- scoreboard */
+
+/* Wider than the 520px the scoreboard alone needed: the song list underneath
+   carries artwork, a title, an artist and a result, and squeezing those into a
+   narrow column makes every title wrap. */
+.final { width: min(660px, 100%); }
+.final h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 28px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: -0.03em;
+}
+.final-sub {
+  margin: 6px 0 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--faint);
+  letter-spacing: 0.01em;
+}
+.final ol { list-style: none; margin: 0 0 22px; padding: 0; display: grid; gap: 8px; }
+.final li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+  font-size: 15px;
+  animation: rank-in 0.5s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+@keyframes rank-in { from { opacity: 0; transform: translateY(10px); } }
+.final li.first {
+  border-color: rgba(247, 185, 62, 0.5);
+  background: linear-gradient(90deg, rgba(247, 185, 62, 0.12), rgba(247, 185, 62, 0.02));
+}
+.final li .rank {
+  width: 26px;
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.final li.first .rank { color: var(--amber); }
+.final li .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; text-align: left; }
+.final li .nm { color: var(--hue, var(--text)); font-weight: 500; }
+.final li .stat {
+  font-size: 11.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.final li .pts {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------- game recap */
+
+.recap {
+  /* The lobby centres its text, which is right for a title and wrong for a list
+     of songs -- every row would float in the middle of its own width. */
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  margin-bottom: 22px;
+  overflow: hidden;
+}
+.recap-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.recap-head .label {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.recap-head .sum {
+  margin-left: auto;
+  text-align: right;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+/* A twenty-round game would push "Play again" out of the stage, so the list
+   scrolls inside a bounded box rather than growing the panel. */
+.recap-list {
+  max-height: min(320px, 38vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.recap-list::-webkit-scrollbar { width: 8px; }
+.recap-list::-webkit-scrollbar-track { background: transparent; }
+.recap-list::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.song {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  animation: rank-in 0.45s var(--ease) both;
+  animation-delay: calc(180ms + var(--i, 0) * 40ms);
+}
+.song:first-child { border-top: none; }
+/* A green edge on the ones you got: the fastest way to read your own game off
+   the list without checking every row's result. */
+.song.mine { box-shadow: inset 2px 0 0 var(--good); }
+.song.missed .info .t { color: var(--muted); }
+
+.song .num {
+  width: 18px;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.song .cover {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+/* Deliberately not called `.art`: that class is the reveal screen's artwork,
+   which sits at opacity 0 until it cross-fades in. */
+.song .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.song .cover.blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  font-size: 15px;
+}
+.song .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.song .info .t {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.song .info .a {
+  font-size: 11.5px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.song .who {
+  flex: none;
+  max-width: 44%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  text-align: right;
+}
+.song .who .first-solver {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  max-width: 100%;
+  font-size: 13px;
+  color: var(--hue, var(--text));
+  font-weight: 500;
+}
+.song .who .first-solver .nm {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.song .who .first-solver .ms {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+}
+.song .who .count { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.song .who .none { font-size: 12.5px; color: var(--bad); }
+
+.final-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.final-actions .btn { text-decoration: none; }
+
+.loading-dots::after { content: ""; animation: dots 1.4s steps(4, end) infinite; }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+
+/* ------------------------------------------------------------- responsive */
+
+@media (max-width: 860px) {
+  body { overflow: auto; }
+  .modes { grid-template-columns: 1fr; }
+  .room-layout { grid-template-columns: 1fr; height: auto; min-height: 100%; }
+  .sidebar { border-left: none; border-top: 1px solid var(--line); height: 46vh; }
+  .scores { max-height: 34%; }
+  .viz-wrap { min-height: 290px; }
+  .viz-center { width: min(70%, 210px); }
+  .viz-face { width: 92px; height: 92px; }
+  .timer { font-size: 42px; }
+  .viz-caption { height: 56px; }
+  .mask .slot { width: 18px; height: 28px; font-size: 16px; border-bottom-width: 2px; }
+  .mask { gap: 8px 11px; }
+  .mask .word { gap: 4px; }
+  .answer-slot { padding: 12px 8px 10px; }
+  .mode-toggle { grid-template-columns: 1fr; }
+  .choices { grid-template-columns: 1fr; gap: 8px; }
+  .choice { padding: 10px 14px; }
+}
+
+/* The cards need the room, so the meter gives some of it back. */
+@media (max-height: 760px) and (min-width: 861px) {
+  .choices { margin-top: 8px; gap: 8px; }
+  .choice { padding: 9px 14px; }
+}
+
+/* A short window leaves the meter very little height, and the centre overlay
+   would eat all of it -- the bars only get whatever radius is left between the
+   overlay and the ring. Shrinking the overlay is what keeps them on screen. */
+@media (max-height: 760px) and (min-width: 861px) {
+  .viz-wrap { min-height: 240px; }
+  .viz-center { width: min(56%, 190px); }
+  .viz-face { width: 84px; height: 84px; }
+  .timer { font-size: 40px; }
+  .viz-caption { height: 46px; margin-top: 8px; }
+  .viz-caption .title { font-size: 15px; }
+  .art { border-radius: 11px; }
+}
+
+/* On a phone the top bar has no room for the pack name; it is already spelled
+   out in the lobby's settings line. */
+@media (max-width: 560px) {
+  .stage { padding: 14px 14px 18px; }
+  .topbar { gap: 10px; }
+  .topbar .meta, .topbar .sep-pack { display: none; }
+  input[type="range"] { width: 58px; }
+  /* The page scrolls on a phone anyway, so the recap can be taller than the
+     bounded box a desktop stage needs. */
+  .recap-list { max-height: 52vh; }
+  /* Side by side, the summary wraps into a ragged block against the heading;
+     stacked it reads as one line of small print under it. */
+  .recap-head { flex-direction: column; align-items: flex-start; gap: 3px; }
+  .recap-head .sum { margin-left: 0; text-align: left; }
+  .song { gap: 10px; padding: 8px 11px; }
+  .song .cover { width: 34px; height: 34px; }
+  .song .who { max-width: 38%; }
+  .code-badge { gap: 12px; padding: 12px 12px 12px 16px; }
+  .code-badge .big { font-size: 25px; letter-spacing: 0.16em; }
+}
+
+/* Motion is decoration here, never information -- the countdown ring and the
+   numbers still read fine standing still. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ------------------------------------------------------- playlist import */
+
+/* Packs and an imported playlist are alternatives, not ingredients (see
+   server/packs.js#selectPacks), so the divider between them says "or" rather
+   than sitting there as decoration. */
+.or-split {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  /* Generous above: the pack grid scrolls and clips its last row mid-card, so a
+     tight gap here reads as the divider overlapping a cut-off pack. */
+  margin: 18px 0 20px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.or-split::before,
+.or-split::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* Code box and its button on one line. The button is fixed and the field takes
+   the rest, so a narrow panel shortens the field rather than wrapping "Join
+   room" onto its own row. */
+.join-row { display: flex; gap: 10px; align-items: stretch; }
+.join-row .code-input { flex: 1; min-width: 0; }
+.join-row .btn { flex: none; }
+/* The hint belongs to the box above it, and the error line below already
+   reserves its own space -- the default 18px would open a gap wide enough to
+   read as a section break before the divider. */
+.join-row + .hint { margin-bottom: 4px; }
+
+/* On a phone the button and a four-letter field cannot share a line without the
+   field ending up narrower than the code it holds. Stacked, both get the full
+   width of the panel. */
+@media (max-width: 560px) {
+  .join-row { flex-direction: column; }
+  .join-row .btn { align-self: stretch; }
+}
+
+/* A room code is read out loud and typed from memory, so it gets the same
+   treatment as the badge in the lobby: monospace, wide tracking, big enough to
+   check at a glance. */
+.code-input {
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  /* The tracking is applied after the last character too, which reads as the
+     text sitting left of centre unless the padding gives it back. */
+  text-indent: 0.26em;
+  text-align: center;
+}
+.code-input::placeholder {
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.import-row { display: flex; gap: 10px; align-items: stretch; }
+.import-row .field { flex: 1; margin-bottom: 0; }
+.import-row .btn { flex: none; align-self: flex-end; }
+
+/* The result line carries the one number that decides whether a playlist is
+   worth starting -- how many of its songs iTunes can actually play. Neutral
+   until we know, then green or red, because "18 of 50" is not self-evidently
+   good or bad news to someone reading it for the first time. */
+.import-note {
+  font-size: 13px;
+  margin: 10px 0 0;
+  min-height: 20px;
+  color: var(--muted);
+}
+.import-note.ok { color: var(--good); }
+.import-note.bad { color: var(--bad); }
+.import-note.busy { color: var(--amber); }
+
+/* An active playlist dims the pack grid rather than hiding or disabling it: the
+   packs are still one click from coming back, and a control that vanishes is
+   harder to find again than one that has gone quiet. */
+.packs.standby { opacity: 0.38; }
+.packs.standby .pack { border-color: var(--line); background: var(--panel-2); }
+
+/* The lobby's read-only view of an imported playlist, in place of the pack
+   grid the host would otherwise be switching between. */
+.playlist-badge {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid rgba(247, 185, 62, 0.55);
+  border-radius: 12px;
+  background: rgba(247, 185, 62, 0.08);
+  margin-bottom: 22px;
+}
+.playlist-badge .icon {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--amber);
+  color: #17110a;
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 11px;
+}
+.playlist-badge .meta { min-width: 0; }
+.playlist-badge strong {
+  display: block;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.playlist-badge .count {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}

@@ -1,0 +1,11 @@
+node_modules/
+data/itunes-cache.json
+npm-debug.log*
+data/memorybeat.db
+data/memorybeat.db-shm
+data/memorybeat.db-wal
+.env
+.env.local
+
+# Deploy target (host, user) -- kept out of the repo. See deploy.env.example.
+deploy.env

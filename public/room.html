@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MemoryBeat — Room</title>
+  <meta name="theme-color" content="#06070a" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Archivo:wght@400;500;600;700&family=Azeret+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2306070a'/><rect x='8' y='16' width='4' height='9' rx='2' fill='%23f7b93e'/><rect x='14' y='7' width='4' height='18' rx='2' fill='%23f7b93e'/><rect x='20' y='12' width='4' height='13' rx='2' fill='%23ff6a3d'/></svg>" />
+</head>
+<body>
+  <div class="room-layout" id="layout">
+    <section class="stage">
+      <div class="topbar">
+        <a class="mark" href="/">Memory<b>Beat</b></a>
+        <span class="sep">/</span>
+        <span class="code" id="top-code">....</span>
+        <span class="sep sep-pack">/</span>
+        <span class="meta" id="top-pack">&nbsp;</span>
+        <span class="spacer"></span>
+        <div class="volume">
+          <button class="mute" id="mute" aria-label="Mute" title="Mute">🔈</button>
+          <input type="range" id="volume" min="0" max="100" value="80" aria-label="Volume" />
+        </div>
+        <button class="btn-ghost" id="leave">Leave</button>
+      </div>
+
+      <!-- lobby ------------------------------------------------------- -->
+      <div class="lobby" id="lobby">
+        <h2 id="lobby-title">Waiting for players</h2>
+        <div class="code-badge" id="code-badge">
+          <div>
+            <span class="label">Room code</span>
+            <div class="big" id="lobby-code">....</div>
+          </div>
+          <button class="btn" id="copy-link">Copy link</button>
+        </div>
+        <div class="roster" id="roster"></div>
+
+        <!-- What the room is playing, for everyone -- the controls below are the
+             host's, this is the readout. Shown only for an imported playlist;
+             a pack selection is already spelled out in the settings line. -->
+        <div class="playlist-badge hidden" id="playlist-badge">
+          <span class="icon" id="playlist-source">PL</span>
+          <span class="meta">
+            <strong id="playlist-name"></strong>
+            <span class="count" id="playlist-count"></span>
+          </span>
+        </div>
+
+        <!-- All of the host's configuration in one scroller.
+             The lobby used to let the pack grid absorb every bit of height the
+             window was short by, which worked while the grid was the only thing
+             in that box. It no longer is, so the whole block scrolls as a unit
+             and the grid renders at its natural size. The settings line and the
+             start button stay outside it: what you are about to start, and the
+             button to start it, must never be somewhere you have to scroll to
+             find. -->
+        <div class="lobby-config hidden" id="lobby-config">
+          <div class="pack-switch">
+            <div class="pack-head">
+              <span class="label">Song packs</span>
+              <span class="pack-sum" data-pack-sum="room"></span>
+            </div>
+            <div class="packs" data-packs="room"></div>
+          </div>
+
+          <!-- Difficulty sits with the packs, above the divider, because that is
+               what it applies to -- an imported playlist is evenly weighted and
+               hides this control entirely. -->
+          <div class="difficulty hidden" id="difficulty">
+            <div class="diff-head">
+              <span class="label">Difficulty</span>
+              <span class="diff-read">
+                <b class="diff-name" id="diff-name"></b>
+                <span class="diff-blurb" id="diff-blurb"></span>
+              </span>
+            </div>
+            <input
+              type="range"
+              id="diff-range"
+              min="0"
+              max="100"
+              step="5"
+              value="25"
+              aria-label="Difficulty"
+              aria-describedby="diff-name diff-blurb"
+            />
+            <div class="diff-scale" aria-hidden="true">
+              <span>the hits</span>
+              <span>deep cuts</span>
+            </div>
+          </div>
+
+          <!-- Both halves, always. Packs and a playlist are alternatives --
+               picking either clears the other -- but neither is a one-way door,
+               so there is no reason to hide one. -->
+          <div class="or-split">or</div>
+          <div class="playlist-import">
+            <div class="pack-head">
+              <span class="label">Import a playlist</span>
+              <span class="pack-sum" data-import-sum="room"></span>
+            </div>
+            <div class="import-row">
+              <label class="field">
+                <span>Playlist link</span>
+                <input
+                  type="url"
+                  data-import-url="room"
+                  placeholder="https://www.deezer.com/playlist/..."
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </label>
+              <button class="btn" data-import-go="room">Import</button>
+            </div>
+            <p class="import-note" data-import-note="room" role="status"></p>
+          </div>
+
+          <div class="mode-switch hidden" id="mode-switch">
+            <div class="mode-head">
+              <span class="label">Answering</span>
+              <span class="mode-blurb" id="mode-blurb"></span>
+            </div>
+            <div class="mode-toggle" role="group" aria-label="Answer mode">
+              <button class="mode-opt" data-mode="classic" aria-pressed="true">
+                <b>Type it</b><span>Name the song in the chat</span>
+              </button>
+              <button class="mode-opt" data-mode="choice" aria-pressed="false">
+                <b>Multiple choice</b><span>Pick from four songs in the pack</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-line" id="settings-line"></div>
+        <div>
+          <button class="btn btn-primary" id="start">Start game</button>
+          <p class="error" id="lobby-error" role="alert"></p>
+        </div>
+      </div>
+
+      <!-- round ------------------------------------------------------- -->
+      <div class="play hidden" id="play">
+        <div class="round-head">
+          <span id="round-label">Round 1 / 10</span>
+        </div>
+
+        <div class="answer-slot" id="answer-slot">
+          <div class="mask" id="mask" aria-label="Song title, hidden"></div>
+          <div class="mask-artist" id="mask-artist"></div>
+        </div>
+
+        <div class="viz-wrap">
+          <canvas id="viz"></canvas>
+          <!-- The face is a fixed square: the clock lives there during the
+               round and the artwork cross-fades into the same box at the
+               reveal, so nothing below it ever moves. -->
+          <div class="viz-center" id="viz-center">
+            <div class="viz-face">
+              <div class="timer" id="timer">--</div>
+              <img class="art" id="art" alt="" />
+            </div>
+            <div class="viz-caption">
+              <div class="title" id="reveal-title"></div>
+              <div class="sub" id="sub">loading</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-line" id="status" role="status" aria-live="polite"></div>
+
+        <!-- Multiple choice: four songs from the pack, one of them the answer. -->
+        <div class="choices hidden" id="choices" role="group" aria-label="Pick the song"></div>
+
+        <!-- Singleplayer has no chat sidebar, so it gets its own guess box. -->
+        <form class="guess-bar hidden" id="guess-bar" autocomplete="off">
+          <input type="text" id="guess-input" maxlength="80" placeholder="Type your guess…" aria-label="Your guess" />
+          <button class="btn btn-primary" type="submit">Guess</button>
+        </form>
+
+        <!-- Singleplayer only: nobody else is on the clock, so a song you don't
+             know can be given up on instead of waited out. The row holds its
+             space for the whole round; only the button inside it comes and goes. -->
+        <div class="skip-row" id="skip-row">
+          <button class="btn btn-ghost" type="button" id="skip">Skip song</button>
+        </div>
+      </div>
+
+      <!-- final scores ------------------------------------------------ -->
+      <div class="lobby hidden" id="final">
+        <div class="final">
+          <h2>Final scores</h2>
+          <!-- What was played, and the one stat worth a sentence of its own. -->
+          <p class="final-sub" id="final-sub"></p>
+          <ol id="leaderboard"></ol>
+
+          <!-- Every song of the game, with who got it and how fast. The list is
+               its own scroller so a twenty-round game cannot push "Play again"
+               off the bottom of the stage. -->
+          <div class="recap hidden" id="recap">
+            <div class="recap-head">
+              <span class="label">Songs this game</span>
+              <span class="sum" id="recap-sum"></span>
+            </div>
+            <div class="recap-list" id="recap-list"></div>
+          </div>
+
+          <div class="final-actions">
+            <button class="btn btn-primary" id="again">Play again</button>
+            <a class="btn" href="/">Main menu</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- sidebar ------------------------------------------------------- -->
+    <aside class="sidebar">
+      <div class="side-head">
+        <span>Players</span><span class="spacer"></span><span id="pcount"></span>
+      </div>
+      <div class="scores" id="scores"></div>
+
+      <div class="chat">
+        <div class="side-head"><span>Chat</span><span class="spacer"></span><span id="chat-mode"></span></div>
+        <div class="chat-log" id="chat-log" role="log" aria-live="polite" aria-label="Chat"></div>
+        <div class="chat-note hidden" id="chat-note">
+          You got it — your messages are private until the round ends.
+        </div>
+        <form class="chat-form" id="chat-form" autocomplete="off">
+          <input type="text" id="chat-input" maxlength="240" placeholder="Say something…" aria-label="Message" />
+          <button class="btn" type="submit">Send</button>
+        </form>
+      </div>
+    </aside>
+  </div>
+
+  <!-- join gate -------------------------------------------------------- -->
+  <div class="overlay" id="join-overlay">
+    <section class="panel" style="max-width:420px">
+      <h2 id="join-title">Join room</h2>
+      <p class="hint" id="join-sub">Pick a name and you're in.</p>
+      <label class="field" for="join-name"><span>Your name</span></label>
+      <input type="text" id="join-name" maxlength="16" placeholder="DJ Anon" />
+      <div style="height:18px"></div>
+      <div id="join-pass-wrap" class="hidden">
+        <label class="field" for="join-pass"><span>Room password</span></label>
+        <input type="password" id="join-pass" maxlength="40" />
+        <div style="height:18px"></div>
+      </div>
+      <button class="btn btn-primary btn-block" id="join-go">Join</button>
+      <p class="error" id="join-error" role="alert"></p>
+      <p style="text-align:center;margin:14px 0 0"><a href="/" style="color:rgba(226,233,246,.4);font-size:13px">Back to menu</a></p>
+    </section>
+  </div>
+
+  <audio id="audio" preload="auto"></audio>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/visualizer.js"></script>
+  <script src="/js/room.js"></script>
+</body>
+</html>

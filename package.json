@@ -1,0 +1,16 @@
+{
+  "name": "memorybeat",
+  "version": "1.0.0",
+  "description": "MemoryBeat — multiplayer name-that-song game with Kahoot-style scoring",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "build-packs": "node scripts/build-packs.js",
+    "warm": "node server/warm.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}

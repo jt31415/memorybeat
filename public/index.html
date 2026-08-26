@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MemoryBeat</title>
+  <meta name="description" content="Name the track before anyone else. The faster you are, the more you score." />
+  <meta name="theme-color" content="#06070a" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Archivo:wght@400;500;600;700&family=Azeret+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+
+  <!-- three amber level bars: the wordmark's meter, shrunk to 16px -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2306070a'/><rect x='8' y='16' width='4' height='9' rx='2' fill='%23f7b93e'/><rect x='14' y='7' width='4' height='18' rx='2' fill='%23f7b93e'/><rect x='20' y='12' width='4' height='13' rx='2' fill='%23ff6a3d'/></svg>" />
+</head>
+<body>
+  <main class="shell">
+    <div class="brand">
+      <div class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <h1>Memory<span class="beat">Beat</span></h1>
+      <p>Name the track before anyone else. The faster you are, the more you score.</p>
+    </div>
+
+    <!-- the whole front door: two choices, nothing else -->
+    <div class="modes" id="view-modes">
+      <!-- Straight into a room: songs are chosen in the lobby now, so a solo
+           setup panel would hold nothing but a second Start button. -->
+      <button class="mode-card" id="solo-start">
+        <span class="glyph" aria-hidden="true">◉</span>
+        <h2>Singleplayer</h2>
+        <p>Just you and a song pack. Ten rounds, best score you can manage.</p>
+      </button>
+      <button class="mode-card" data-open="multi">
+        <span class="glyph" aria-hidden="true">◎</span>
+        <h2>Multiplayer</h2>
+        <p>Join a room with its code, or make one and race your friends to the buzzer.</p>
+      </button>
+    </div>
+
+    <!-- Solo has no setup panel; its errors surface under the mode cards. -->
+    <p class="error" id="solo-error" role="alert"></p>
+
+    <!-- multiplayer: join an existing room, or make a new one. The name is asked
+         once, above both, since either path needs it. -->
+    <section class="panel hidden" id="view-multi">
+      <div class="panel-head">
+        <button class="btn-ghost" data-back>&larr; Back</button>
+        <h2>Multiplayer</h2>
+      </div>
+
+      <label class="field" for="mp-name"><span>Your name</span></label>
+      <input type="text" id="mp-name" maxlength="16" placeholder="DJ Anon" autocomplete="off" />
+      <div style="height:18px"></div>
+
+      <!-- Joining comes first: most people arriving here were sent a code by
+           whoever already made the room. -->
+      <label class="field" for="mp-code"><span>Room code</span></label>
+      <div class="join-row">
+        <!-- No maxlength: a pasted room link has to fit in here long enough to
+             be read (the input handler trims anything typed to four). -->
+        <input type="text" id="mp-code" class="code-input" placeholder="ABCD"
+               autocomplete="off" autocapitalize="characters" spellcheck="false"
+               aria-describedby="mp-join-hint" />
+        <button class="btn btn-primary" id="mp-join">Join room</button>
+      </div>
+      <p class="hint" id="mp-join-hint">Four letters. Pasting the whole room link works too.</p>
+      <p class="error" id="mp-join-error" role="alert"></p>
+
+      <div class="or-split">or start a new room</div>
+
+      <!-- Song packs and playlist import are not here: both live in the room
+           lobby, where the host can change them between games rather than
+           committing to them before anyone has arrived. -->
+      <div class="row">
+        <label class="field">
+          <span>Max players</span>
+          <input type="number" id="mp-max" min="2" max="20" value="8" />
+        </label>
+        <label class="field">
+          <span>Password <span style="text-transform:none;letter-spacing:0">(optional)</span></span>
+          <input type="password" id="mp-pass" maxlength="40" placeholder="none" autocomplete="new-password" />
+        </label>
+      </div>
+
+      <!-- Outline, not amber: two filled buttons in one panel read as a choice
+           between equals, and the join above is the one most people want. -->
+      <button class="btn btn-block" id="mp-create">Create room &amp; get link</button>
+      <p class="error" id="mp-error" role="alert"></p>
+    </section>
+
+    <p class="credits">Made by Nisc_ and jt314</p>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/menu.js"></script>
+</body>
+</html>
