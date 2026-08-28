@@ -4,6 +4,9 @@ A multiplayer "name that track" game. A 30-second clip plays and you type the
 title into the chat, skribbl style — first one there scores the most, with
 Kahoot-style decay, so an early guess is worth roughly twice a last-second one.
 
+- **Daily challenge** — five songs, the same five for everyone, once a day, with
+  a global leaderboard. Needs a Discord sign-in. See [Daily
+  challenge](#daily-challenge).
 - **Singleplayer** — straight into a room; pick packs or import a playlist there,
   then play ten rounds.
 - **Multiplayer** — join a room with its four-letter code, or create one, share
@@ -37,7 +40,8 @@ dependency and no `--env-file` flag to remember. Everything in it is optional �
 the game runs, and Deezer playlist import works, with none of it set.
 `LASTFM_API_KEY` improves popularity ranking during `build-packs`; the Spotify
 pair enables Spotify import (see [Importing a playlist](#importing-a-playlist),
-which explains why Deezer is the default).
+which explains why Deezer is the default); the Discord pair enables the [daily
+challenge](#daily-challenge), which is switched off without them.
 
 Strongly recommended:
 
@@ -331,6 +335,65 @@ enough. Rejections distinguish a short playlist from an unresolvable one from an
 iTunes rate limit, since the three look identical in the numbers and have
 opposite remedies.
 
+## Daily challenge
+
+Five songs from the well-known end of the All Time pack, in typing mode, played
+solo — and the same five for everybody, whatever time zone they are in and
+whatever time of day they play. One run each, ranked on a global leaderboard
+that resets at midnight UTC.
+
+It is switched off unless `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` are
+set (see `.env.example` for how to get them). Everything else about the game
+works exactly the same without them.
+
+### Why sign in
+
+Everywhere else in MemoryBeat a player is a random string in localStorage, which
+is right for a room you were sent a link to and useless for a leaderboard:
+clearing it buys another attempt, and a script can mint a thousand identities in
+a second. A Discord account is not unforgeable, but it costs enough to make the
+board worth reading.
+
+Only the `identify` scope is requested — an account id, a display name, an
+avatar. The access token is used once, on the callback, and thrown away; nothing
+else about the account is ever read or stored. Sessions are an HMAC-signed
+cookie rather than rows in a table, since a session here is four fields and is
+only ever read.
+
+### Same five songs
+
+The choice is a seeded shuffle of the pack's best-known 300, seeded from the
+UTC date — a pure function of the day, recomputable anywhere.
+
+That is not enough on its own, because whether a chosen song is *playable* is
+not deterministic: iTunes is rate limited, and a lookup that fails at 09:00 can
+succeed at 21:00. So the first request of the day walks the seeded order,
+settles on five it can actually serve, and writes that list to the
+`daily_challenges` table. Everyone else that day reads the row. The seed decides
+what gets *tried*; the frozen row decides what everyone *gets*. The server also
+settles the day just after each reset, so the first player of the day does not
+wear a cold lookup on the loading screen.
+
+Set `DAILY_SALT` if you would rather the schedule not be computable from a copy
+of this repository. It protects the surprise and nothing else.
+
+### One run a day
+
+A run is filed when it **finishes**. Abandoning one — a closed tab, a dropped
+connection — writes nothing, so it can be started again; the daily page offers
+to resume the room it was left in rather than replacing it. A finished run is
+final, and the `(day, discord_id)` primary key is what enforces that.
+
+The tradeoff is deliberate and worth being clear about: it lets somebody who
+lost their connection have another go, at the cost of letting somebody quit a
+bad first round and re-roll the same five songs. Recording at the *start*
+instead would close that door and slam it on the disconnected player too.
+
+Nothing about a run is taken from the client. The score is the same number
+`game.js` has been broadcasting all along, the songs come from the frozen row,
+and a daily room is bound to the Discord id in the handshake cookie — so a room
+code in a URL is not a way into somebody else's run.
+
 ## How a round works
 
 1. The server picks a track, mints a one-off audio token, and sends the title
@@ -374,6 +437,8 @@ reveal.
 server/
   index.js       HTTP routes, socket wiring, audio proxy
   game.js        room lifecycle, round loop, scoring, chat rules
+  auth.js        Discord OAuth2, signed session cookies
+  daily.js       the day's five songs, and the leaderboards
   difficulty.js  popularity-weighted song sampling
   guess.js       guess matching, typo tolerance, title masking
   itunes.js      track resolution, throttling, clip cache, audio tokens
@@ -393,8 +458,10 @@ scripts/
 public/
   index.html     main menu
   room.html      lobby + game
+  daily.html     daily challenge: sign-in, play button, leaderboards
   js/menu.js     front page; joins and creates rooms, configures nothing
   js/room.js     game client, and every lobby control
+  js/daily.js    daily page; no socket, the game itself is an ordinary room
   js/visualizer.js  canvas visualiser
   css/style.css
 ```
@@ -405,7 +472,9 @@ no dependency and no native build step.
 
 ## Notes
 
-- Rooms are in-memory; restarting the server clears them.
+- Rooms are in-memory; restarting the server clears them. A daily run in
+  progress goes with them — the leaderboard row does not, since it is only
+  written once the run has finished.
 - An empty room is cleaned up two minutes after the last player leaves.
 - If the host disconnects, the host role passes to another player in the room.
 - Just start typing anywhere in the room — it focuses the guess box for you.

@@ -102,6 +102,30 @@ try {
     scp "${GZ_NAME}" "${ServerUser}@${ServerIp}:${REMOTE_DIR}/${GZ_NAME}"
     Assert-LastExitCode "Upload"
 
+    # .env travels separately and is handed to `docker run --env-file`, never
+    # baked into the image -- an image layer holding a client secret is a copy of
+    # that secret in every tarball, every registry and every `docker history`. It
+    # is in .dockerignore for exactly that reason, which is also why it has to be
+    # sent here: without this the container starts with no credentials at all,
+    # and the daily challenge switches itself off in production while working
+    # locally.
+    $envFileArg = ""
+    $localEnv = Join-Path $PSScriptRoot ".env"
+    if (Test-Path $localEnv) {
+        Write-Host "Uploading .env..." -ForegroundColor Cyan
+        scp "$localEnv" "${ServerUser}@${ServerIp}:${REMOTE_DIR}/.env"
+        Assert-LastExitCode "Upload .env"
+        # Strip CRs. `docker run --env-file` does not treat \r as whitespace, so
+        # an .env saved by a Windows editor yields a client secret with a
+        # trailing carriage return -- which fails authentication and looks
+        # nothing like a line-endings problem when it does.
+        ssh "${ServerUser}@${ServerIp}" "sed -i 's/\r`$//' '${REMOTE_DIR}/.env' && chmod 600 '${REMOTE_DIR}/.env'"
+        Assert-LastExitCode "Normalising .env"
+        $envFileArg = "--env-file ${REMOTE_DIR}/.env"
+    } else {
+        Write-Host "  no .env found -- deploying without credentials." -ForegroundColor Yellow
+    }
+
     # 4. Load and run on the server. `docker load` detects gzip itself, so the
     #    tarball never needs unpacking as a separate step.
     Write-Host "Executing remote deployment commands..." -ForegroundColor Cyan
@@ -123,6 +147,7 @@ sudo docker run -d \
   --restart unless-stopped \
   -p ${HostPort}:3000 \
   -v "${VOLUME}:/app/data" \
+  ${envFileArg} \
   ${reseedEnv} \
   "${IMAGE_NAME}:${Tag}"
 

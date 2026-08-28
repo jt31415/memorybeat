@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const daily = require('./daily');
 const { selectPacks, trackKey, dedupeKey } = require('./packs');
 const { resolveMany, mintToken, prefetch } = require('./itunes');
 const { judge, maskTitle, revealableIndexes, norm } = require('./guess');
@@ -88,6 +89,27 @@ class Room {
     // How players answer: type the title, or pick it out of four. See MODES.
     this.mode = cleanMode(opts.mode);
     this.hostPid = opts.hostPid;
+    /**
+     * Daily challenge rooms: `{ day, user }`, or null for an ordinary room.
+     *
+     * A daily is a solo game with every one of its settings taken away -- the
+     * songs, the mode, the difficulty and the round count are all the same for
+     * everybody that day, which is the only reason the leaderboard means
+     * anything. So `daily` is read all over this class as "this room does not
+     * get to choose", and the setters below refuse outright rather than
+     * accepting a change the leaderboard would then be lying about.
+     */
+    this.daily = opts.daily || null;
+    /**
+     * A song list decided elsewhere, played exactly as given.
+     *
+     * The daily hands its five frozen tracks in here rather than letting
+     * start() draw from the pack, because "the same five songs for everyone" is
+     * settled a level up (see daily.js) and must not be re-rolled per room.
+     */
+    this.fixedTracks = Array.isArray(opts.fixedTracks) && opts.fixedTracks.length
+      ? opts.fixedTracks.slice()
+      : null;
     // dedupeKey -> position in this.pack.tracks, built on demand and thrown
     // away with the pack. Only multiple choice needs it (see pickDecoys).
     this.packPositions = null;
@@ -106,6 +128,9 @@ class Room {
     this.timers = new Set();
     // trackKeys played in this room's recent games, oldest first.
     this.history = [];
+    // True once start() has been through once. Only the daily reads it, and
+    // only to make sure a run cannot be taken twice.
+    this.started = false;
     this.createdAt = Date.now();
     // Counts as empty until the creator actually lands on the room page, so a
     // room created and then abandoned gets reaped instead of lingering.
@@ -225,6 +250,9 @@ class Room {
         ? { source: this.pack.source, url: this.pack.url, name: this.pack.name }
         : null,
       mode: this.mode,
+      // The client hides every lobby control for a daily room -- there is
+      // nothing in there it is allowed to change.
+      daily: this.daily ? { day: this.daily.day } : null,
       state: this.state,
       hostPid: this.hostPid,
       roundIndex: this.roundIndex,
@@ -423,6 +451,7 @@ class Room {
    * with nothing to draw from has no start button worth pressing.
    */
   setPacks(pid, packIds) {
+    if (this.daily) return;
     if (pid !== this.hostPid) return;
     if (this.state !== 'lobby' && this.state !== 'ended') return;
     const selection = selectPacks(packIds);
@@ -450,6 +479,7 @@ class Room {
    * they come from, so recently played ones are just as worth holding back.
    */
   setDifficulty(pid, value) {
+    if (this.daily) return;
     if (pid !== this.hostPid) return;
     if (this.state !== 'lobby' && this.state !== 'ended') return;
     // An imported playlist is evenly weighted by definition, so there is nothing
@@ -480,6 +510,7 @@ class Room {
    * and the other half with buttons.
    */
   setMode(pid, mode) {
+    if (this.daily) return;
     if (pid !== this.hostPid) return;
     if (this.state !== 'lobby' && this.state !== 'ended') return;
     const next = cleanMode(mode);
@@ -690,12 +721,18 @@ class Room {
   async start(pid) {
     if (pid !== this.hostPid) return;
     if (this.state !== 'lobby' && this.state !== 'ended') return;
+    // A daily is one run, and the run began the first time this was called.
+    // Replaying the room would be a second attempt at songs the player has now
+    // heard, so the only way back to the start is a fresh room -- which
+    // /api/daily/start refuses once a run has been finished and filed.
+    if (this.daily && this.started) return;
     if (!this.pack) {
       this.broadcast('room:error', { message: 'That song pack no longer exists.' });
       return;
     }
 
     this.clearTimers();
+    this.started = true;
     this.state = 'loading';
     this.recap = [];
     this.summary = null;
@@ -714,6 +751,10 @@ class Room {
     // resolver takes the first N it can play, so they are only reached when the
     // fresh ones run out (small pack, or a cold cache). Better a repeat than a
     // short game.
+    // A fixed list is already resolved and already in the right order, so there
+    // is nothing to choose and nothing to look up -- see this.fixedTracks.
+    if (this.fixedTracks) return this.startWith(this.fixedTracks);
+
     const candidates = this.orderCandidates();
 
     let resolved;
@@ -739,7 +780,12 @@ class Room {
       return;
     }
 
-    this.tracks = resolved.slice(0, this.configuredRounds);
+    this.startWith(resolved.slice(0, this.configuredRounds));
+  }
+
+  /** Take a settled song list and get the first round moving. */
+  startWith(tracks) {
+    this.tracks = tracks;
     this.remember(this.tracks);
     this.totalRounds = this.tracks.length;
     this.roundIndex = -1;
@@ -1032,8 +1078,53 @@ class Room {
     this.state = 'ended';
     this.round = null;
     this.summary = this.buildSummary();
+    if (this.daily) this.fileDailyRun();
     this.broadcast('game:over', this.summary);
     this.syncState();
+  }
+
+  /**
+   * Put a finished daily run on the leaderboard.
+   *
+   * Here rather than anywhere earlier because "finished" is the rule the mode
+   * was built on: a run that is abandoned halfway writes nothing and can be
+   * started again, which is what lets somebody who lost their connection have
+   * another go. Reaching finish() is the only thing that spends the attempt.
+   *
+   * The score comes off the player object, which is the same number the game
+   * has been broadcasting all along -- the client is never asked what it
+   * scored, and could not be believed if it were.
+   */
+  fileDailyRun() {
+    const { day, user } = this.daily;
+    const player = this.players.get(this.hostPid);
+    if (!player || !user) return;
+
+    const stats = this.playerStats(player.pid);
+    const totalMs = this.recap.reduce((sum, song) => {
+      const hit = song.solvers.find((s) => s.pid === player.pid);
+      return hit ? sum + hit.ms : sum;
+    }, 0);
+
+    let recorded = false;
+    try {
+      recorded = daily.recordRun(day, user, {
+        score: player.score,
+        correct: stats.correct,
+        rounds: this.totalRounds,
+        totalMs: stats.correct ? totalMs : null,
+        bestMs: stats.bestMs
+      });
+    } catch (err) {
+      // A leaderboard write failing must not eat the final screen -- the player
+      // still played the game, and they should still see how they did.
+      console.error('[daily] could not record run:', err.message);
+    }
+
+    // `recorded` is false when a run for this account and day already existed,
+    // which normally means two tabs finished the same challenge. The client
+    // says so rather than showing a score that quietly did not count.
+    this.summary.daily = { day, recorded, name: user.username };
   }
 
   destroy() {

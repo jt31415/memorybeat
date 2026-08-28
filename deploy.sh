@@ -64,6 +64,26 @@ echo "🚚 Uploading to ${REMOTE_DIR}..."
 ssh "${SERVER_USER}@${SERVER_IP}" "mkdir -p '${REMOTE_DIR}'"
 scp "${GZ_NAME}" "${SERVER_USER}@${SERVER_IP}:${REMOTE_DIR}/${GZ_NAME}"
 
+# .env travels separately and is handed to `docker run --env-file`, never baked
+# into the image -- an image layer holding a client secret is a copy of that
+# secret in every tarball, every registry and every `docker history`. It is in
+# .dockerignore for exactly that reason, which is also why it has to be sent
+# here: without this the container starts with no credentials at all, and the
+# daily challenge switches itself off in production while working locally.
+ENV_FILE_ARG=""
+if [ -f .env ]; then
+  echo "🔑 Uploading .env..."
+  scp .env "${SERVER_USER}@${SERVER_IP}:${REMOTE_DIR}/.env"
+  # Strip CRs. `docker run --env-file` does not treat \r as whitespace, so an
+  # .env saved by a Windows editor yields a client secret with a trailing
+  # carriage return -- which fails authentication and looks nothing like a
+  # line-endings problem when it does.
+  ssh "${SERVER_USER}@${SERVER_IP}" "sed -i 's/\r\$//' '${REMOTE_DIR}/.env' && chmod 600 '${REMOTE_DIR}/.env'"
+  ENV_FILE_ARG="--env-file ${REMOTE_DIR}/.env"
+else
+  echo "   no .env found -- deploying without credentials." >&2
+fi
+
 # 4. Load and run on the server. `docker load` detects gzip itself, so the
 #    tarball never needs unpacking as a separate step.
 echo "🌐 Executing remote deployment commands..."
@@ -87,6 +107,7 @@ sudo docker run -d \
   --restart unless-stopped \
   -p ${HOST_PORT}:3000 \
   -v "${VOLUME}:/app/data" \
+  ${ENV_FILE_ARG} \
   ${RESEED_ENV} \
   "${IMAGE_NAME}:${TAG}"
 

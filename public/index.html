@@ -23,8 +23,17 @@
       <p>Name the track before anyone else. The faster you are, the more you score.</p>
     </div>
 
-    <!-- the whole front door: two choices, nothing else -->
+    <!-- the whole front door: three choices, nothing else -->
     <div class="modes" id="view-modes">
+      <!-- Spans the row because it is the one mode that is the same for
+           everybody today -- and because it is the only one with a reason to
+           come back tomorrow. -->
+      <a class="mode-card featured" href="/daily">
+        <span class="glyph" aria-hidden="true">◈</span>
+        <span class="tag">New</span>
+        <h2>Daily challenge</h2>
+        <p>Five songs, the same five for everyone, once a day. Sign in with Discord and take your shot at the global leaderboard.</p>
+      </a>
       <!-- Straight into a room: songs are chosen in the lobby now, so a solo
            setup panel would hold nothing but a second Start button. -->
       <button class="mode-card" id="solo-start">

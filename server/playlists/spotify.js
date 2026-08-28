@@ -146,6 +146,20 @@ async function getJson(url) {
       + 'user-created playlist.'
     ), { status: 404 });
   }
+  if (res.status === 403) {
+    // Not a per-playlist permission problem: the credentials authenticate fine
+    // (the token exchange returns 200) and /albums, /tracks and /search all
+    // work, but /playlists/{id}/tracks is refused for every playlist, so no
+    // import can succeed. Spotify gates this endpoint on the app rather than on
+    // the request, and a hobby app in development mode does not get it. Nothing
+    // to retry and nothing to fix here -- use Deezer, which needs no
+    // credentials at all.
+    throw Object.assign(new Error(
+      'Spotify refused to list this playlist\'s tracks (403). This app does not '
+      + 'have access to the playlist-tracks endpoint, so Spotify import cannot '
+      + 'work -- paste a Deezer playlist link instead.'
+    ), { status: 403 });
+  }
   if (res.status === 429) {
     throw Object.assign(new Error('Spotify is rate limiting this app.'), { status: 429 });
   }

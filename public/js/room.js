@@ -74,6 +74,8 @@ const el = {
   recapSum: $('recap-sum'),
   recapList: $('recap-list'),
   again: $('again'),
+  menuLink: $('menu-link'),
+  dailyNote: $('daily-note'),
   scores: $('scores'),
   pcount: $('pcount'),
   chatLog: $('chat-log'),
@@ -395,7 +397,7 @@ fetch('/api/packs')
   .then((r) => r.json())
   .then((packs) => {
     renderPackSwitch(packs);
-    if (room) updatePackSwitch(room, room.hostPid === me);
+    if (room) updatePackSwitch(room, canConfigure(room));
   })
   .catch(() => {}); // switching is a convenience; the room still works without it
 
@@ -602,6 +604,18 @@ for (const btn of el.modeSwitch.querySelectorAll('.mode-opt')) {
 
 /* -------------------------------------------------------------- room state */
 
+/**
+ * Whether this browser gets the lobby's settings controls.
+ *
+ * The host, in an ordinary room. Never in a daily one: every setting there is
+ * fixed for the day, and a control that cannot change anything is worse than
+ * no control at all. The server refuses the changes regardless (see
+ * Room#setPacks and friends) -- this is only what stops us offering them.
+ */
+function canConfigure(state) {
+  return !!state && state.hostPid === me && !state.daily;
+}
+
 function applyState(state) {
   room = state;
   assignHues(state.players);
@@ -611,18 +625,33 @@ function applyState(state) {
   el.pcount.textContent = state.solo ? '' : `${state.players.filter((p) => p.connected).length}/${state.maxPlayers}`;
 
   const isHost = state.hostPid === me;
-  el.start.classList.toggle('hidden', !isHost);
+  // A daily room has nothing to configure and nothing to press: the songs, the
+  // mode, the difficulty and the round count are the same for everybody today,
+  // and joining starts it. So the host controls are not merely disabled, they
+  // are gone -- there is no version of this room where they would apply.
+  const isDaily = !!state.daily;
+  el.start.classList.toggle('hidden', !isHost || isDaily);
   el.start.disabled = state.state === 'loading';
   el.start.textContent = state.state === 'loading' ? 'Loading songs…' : (state.state === 'ended' ? 'New game' : 'Start game');
-  el.again.classList.toggle('hidden', !isHost);
-  updatePackSwitch(state, isHost);
-  updateDifficulty(state, isHost);
-  updateModeSwitch(state, isHost);
+  el.again.classList.toggle('hidden', !isHost || isDaily);
+  if (isDaily) {
+    el.menuLink.href = '/daily';
+    el.menuLink.textContent = 'Daily challenge';
+    // The code is a private handle on one person's run, not something to share.
+    el.topCode.textContent = 'Daily';
+  }
+  // Each of these hides its own control when handed false, so the daily gets
+  // an empty lobby for free rather than needing a second way to blank it.
+  updatePackSwitch(state, canConfigure(state));
+  updateDifficulty(state, canConfigure(state));
+  updateModeSwitch(state, canConfigure(state));
 
   el.codeBadge.classList.toggle('hidden', !!state.solo);
-  el.lobbyTitle.textContent = state.solo
-    ? 'Ready when you are'
-    : (isHost ? 'Your room is ready' : 'Waiting for the host to start');
+  el.lobbyTitle.textContent = isDaily
+    ? "Loading today's five songs…"
+    : (state.solo
+      ? 'Ready when you are'
+      : (isHost ? 'Your room is ready' : 'Waiting for the host to start'));
 
   el.settings.innerHTML = '';
   const bits = [
@@ -1487,6 +1516,17 @@ socket.on('game:over', (summary) => {
   }
   el.recapSum.textContent = notes.join(' · ');
 
+  // A daily run is filed the moment it finishes, so say plainly whether it
+  // landed. `recorded: false` means a run for this account and day was already
+  // there -- almost always a second tab -- and the player deserves to know the
+  // score they are looking at is not the one on the board.
+  el.dailyNote.classList.toggle('hidden', !summary.daily);
+  if (summary.daily) {
+    el.dailyNote.textContent = summary.daily.recorded
+      ? "Your run is on today's leaderboard. Next five songs at midnight UTC."
+      : "You'd already finished today's challenge, so this run wasn't counted.";
+  }
+
   showView('final');
 });
 
@@ -1707,3 +1747,32 @@ if (el.joinName.value) {
   el.joinGo.textContent = 'Enter room';
 }
 setTimeout(() => (el.joinName.value ? el.joinGo : el.joinName).focus(), 50);
+
+/*
+ * A daily run needs no name -- it plays under the Discord account, which the
+ * server reads off the session cookie and this page cannot influence. The gate
+ * itself stays: a click is what earns the browser permission to play audio, and
+ * a countdown that starts before the tab is allowed to make a sound would cost
+ * the player the first round of a game they only get one shot at.
+ */
+fetch(`/api/room/${encodeURIComponent(CODE)}`)
+  .then((r) => (r.ok ? r.json() : null))
+  .then((info) => {
+    if (!info || !info.daily || joined) return;
+    document.querySelector('label[for="join-name"]').classList.add('hidden');
+    el.joinName.classList.add('hidden');
+    el.joinTitle.textContent = 'Daily challenge';
+    el.joinSub.textContent = "Five songs, thirty seconds each. Tap to start — the clock "
+      + 'begins as soon as the first clip loads.';
+    el.joinGo.textContent = "Start today's challenge";
+    // The code is a private handle on one person's run, not something to pass
+    // around, so the top bar names the mode instead of showing it off.
+    el.topCode.textContent = 'Daily';
+    const back = el.overlay.querySelector('a[href="/"]');
+    if (back) {
+      back.href = '/daily';
+      back.textContent = 'Back to the daily';
+    }
+    el.joinGo.focus();
+  })
+  .catch(() => {}); // the ordinary gate still works

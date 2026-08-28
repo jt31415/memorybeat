@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MemoryBeat — Daily challenge</title>
+  <meta name="description" content="Five songs, the same five for everyone, once a day. Play the MemoryBeat daily challenge and take on the global leaderboard." />
+  <meta name="theme-color" content="#06070a" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Archivo:wght@400;500;600;700&family=Azeret+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2306070a'/><rect x='8' y='16' width='4' height='9' rx='2' fill='%23f7b93e'/><rect x='14' y='7' width='4' height='18' rx='2' fill='%23f7b93e'/><rect x='20' y='12' width='4' height='13' rx='2' fill='%23ff6a3d'/></svg>" />
+</head>
+<body>
+  <main class="shell setup">
+    <div class="brand">
+      <a class="brand-link" href="/"><h1>Memory<span class="beat">Beat</span></h1></a>
+    </div>
+
+    <section class="panel daily-panel">
+      <div class="panel-head">
+        <a class="btn-ghost" href="/">&larr; Back</a>
+        <h2>Daily challenge</h2>
+      </div>
+
+      <!-- The date and the countdown to the reset. Both matter: the date says
+           which puzzle this is, the countdown says how long is left to play
+           it. -->
+      <div class="daily-head">
+        <div>
+          <span class="label">Today's five songs</span>
+          <div class="daily-date" id="daily-date">&nbsp;</div>
+        </div>
+        <div class="daily-reset">
+          <span class="label">Resets in</span>
+          <div class="daily-clock" id="daily-clock">--:--:--</div>
+        </div>
+      </div>
+
+      <!-- Exactly one of these is ever visible. Which depends on whether the
+           server can run this mode, whether you are signed in, and whether you
+           have already played -- painted by daily.js. -->
+      <div class="daily-action" id="daily-action" role="status" aria-live="polite">
+        <p class="hint" id="daily-loading">Loading today's challenge…</p>
+      </div>
+
+      <p class="error" id="daily-error" role="alert"></p>
+
+      <!-- leaderboards --------------------------------------------------- -->
+      <div class="board-tabs" role="tablist" aria-label="Leaderboard">
+        <button class="board-tab" data-board="today" role="tab" aria-selected="true">Today</button>
+        <button class="board-tab" data-board="allTime" role="tab" aria-selected="false">All time</button>
+      </div>
+
+      <div class="board" id="board">
+        <p class="hint" id="board-empty">Nobody has finished today's challenge yet. Be first.</p>
+        <ol class="board-list" id="board-list"></ol>
+      </div>
+    </section>
+
+    <p class="credits">Made by Nisc_ and jt314</p>
+  </main>
+
+  <script src="/js/daily.js"></script>
+</body>
+</html>

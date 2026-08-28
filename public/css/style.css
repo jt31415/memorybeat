@@ -1914,3 +1914,228 @@ input[type="range"]::-moz-range-thumb {
   text-transform: uppercase;
   color: var(--muted);
 }
+
+/* ------------------------------------------------------- daily challenge */
+
+/* The featured mode card spans the row. Three equal cards would have made the
+   daily one option among three; it is the one with a reason to come back
+   tomorrow, so it gets the top of the grid to itself. */
+.mode-card.featured {
+  grid-column: 1 / -1;
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  border-color: rgba(247, 185, 62, 0.3);
+  background: linear-gradient(150deg, rgba(247, 185, 62, 0.11), rgba(226, 233, 246, 0.02) 62%);
+}
+/* Already warm at rest, so the hover bloom starts from further along rather
+   than lighting up from nothing like the cool cards below it. */
+.mode-card.featured::after { opacity: 0.35; }
+.mode-card.featured p { max-width: 56ch; }
+.mode-card .tag {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--amber);
+  color: #17110a;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.brand-link { color: inherit; text-decoration: none; }
+
+/* The panel is a flex column with a max height (see .shell > .panel), so the
+   board is the one child allowed to give up space -- everything above it is
+   the point of the page and must stay on screen. */
+.daily-panel .board {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* The global .hint pulls itself up by 10px to sit under a field label. There is
+   no label here, so it would tuck under the tab row's border instead. */
+.board .hint { margin: 4px 0 0; }
+
+.daily-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.daily-date {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin-top: 4px;
+}
+.daily-reset { text-align: right; }
+.daily-clock {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  /* Digits change every second; without this the whole line jitters as the
+     glyph widths shift under it. */
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-action { margin-bottom: 26px; }
+.daily-action .hint { margin: 0 0 16px; }
+.daily-action .btn-block { margin-bottom: 12px; }
+
+.daily-buttons { display: flex; gap: 10px; }
+.daily-buttons .btn { flex: 1; }
+
+/* Discord's own blurple, because a sign-in button that does not look like the
+   thing it signs you into reads as a generic redirect. */
+.discord-btn {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  background: #5865f2;
+  border-color: #5865f2;
+  color: #fff;
+}
+.discord-btn:hover { background: #4752c4; border-color: #4752c4; color: #fff; }
+
+.whoami {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.whoami img { width: 26px; height: 26px; border-radius: 50%; }
+.whoami-name { flex: 1; font-weight: 600; font-size: 14.5px; }
+
+/* Your own result, once you have played. Three numbers and nothing else: the
+   score, how many you got, and where that put you. */
+.daily-result {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.daily-stat {
+  padding: 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  text-align: center;
+}
+.daily-stat b {
+  display: block;
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+}
+.daily-stat span {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.board-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.board-tab {
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.board-tab:hover { color: var(--text); }
+.board-tab[aria-selected="true"] { color: var(--amber); border-bottom-color: var(--amber); }
+
+.board-list { list-style: none; margin: 0; padding: 0; }
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+}
+.board-row:nth-child(odd) { background: rgba(226, 233, 246, 0.03); }
+/* Your own row, wherever it is in the list -- the number you came to find. */
+.board-row.me {
+  background: rgba(247, 185, 62, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(247, 185, 62, 0.3);
+}
+.board-rank {
+  width: 30px;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.board-row.me .board-rank { color: var(--amber); }
+.board-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.board-who img { width: 24px; height: 24px; border-radius: 50%; flex: none; }
+.board-who b {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-meta {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.board-score {
+  flex: none;
+  min-width: 62px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  .daily-head { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .daily-reset { text-align: left; }
+  .mode-card .tag { top: 16px; right: 16px; }
+}
