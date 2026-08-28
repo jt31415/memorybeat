@@ -70,6 +70,7 @@ const el = {
   final: $('final'),
   finalSub: $('final-sub'),
   leaderboard: $('leaderboard'),
+  honors: $('honors'),
   recap: $('recap'),
   recapSum: $('recap-sum'),
   recapList: $('recap-list'),
@@ -184,12 +185,48 @@ function playerId() {
   return pid;
 }
 
+/* ------------------------------------------------------------- phone layout */
+
+/* Everything a phone does differently hangs off this one query, and the round
+   screen re-lays-itself-out on rotation, so it is a live matcher rather than a
+   width read once at load. */
+const NARROW = window.matchMedia('(max-width: 860px)');
+
+/*
+ * The insets the round screen pins its answer bars to.
+ *
+ * An on-screen keyboard is not a layout change on iOS: it shrinks the *visual*
+ * viewport and leaves the page at its full height underneath, so `top: 0` is
+ * somewhere above the screen and `bottom: 0` is somewhere behind the keyboard.
+ * These two properties are the gap on each side, and the pinned title and guess
+ * box offset themselves by them. Where the browser really does resize the page
+ * (Chrome, via interactive-widget=resizes-content) both come out 0 and the
+ * offsets cost nothing.
+ */
+function syncViewportInsets() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const s = document.documentElement.style;
+  const top = Math.max(0, Math.round(vv.offsetTop));
+  s.setProperty('--vv-top', `${top}px`);
+  s.setProperty('--vv-bottom', `${Math.max(0, Math.round(window.innerHeight - vv.height - top))}px`);
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewportInsets);
+  window.visualViewport.addEventListener('scroll', syncViewportInsets);
+  syncViewportInsets();
+}
+
 /* --------------------------------------------------------------------- views */
 
 function showView(name) {
   el.lobby.classList.toggle('hidden', name !== 'lobby');
   el.play.classList.toggle('hidden', name !== 'play');
   el.final.classList.toggle('hidden', name !== 'final');
+  // The phone's guess bar is fixed to the bottom of the screen, so the page
+  // below it only needs to keep clear while there is a round on.
+  document.body.classList.toggle('in-play', name === 'play');
 }
 
 /**
@@ -1096,7 +1133,9 @@ document.addEventListener('keydown', (e) => {
   if (active === el.chatInput || active === el.guessInput) return;
   if (active && /^(INPUT|TEXTAREA)$/.test(active.tagName)) return;
   if (e.key.length !== 1) return;
-  const box = room && room.solo ? el.guessInput : el.chatInput;
+  // Whichever box is actually on screen: the pinned bar where there is one,
+  // the chat otherwise.
+  const box = (room && room.solo) || NARROW.matches ? el.guessInput : el.chatInput;
   if (box && !box.disabled) box.focus();
 });
 
@@ -1378,6 +1417,103 @@ function buildLeaderboard(leaderboard, rounds, solo) {
   });
 }
 
+/**
+ * A single honourable-mention card. `pid` is what tints it, so a name in a card
+ * is the same colour as that player's row in the scoreboard above.
+ */
+function honorCard({ cap, value, name, pid, sub }) {
+  const card = document.createElement('div');
+  card.className = 'honor';
+  if (pid) tint(card, pid);
+
+  const c = document.createElement('span');
+  c.className = 'cap';
+  c.textContent = cap;
+  const v = document.createElement('span');
+  v.className = 'val';
+  v.textContent = value;
+  const n = document.createElement('span');
+  n.className = 'nm';
+  n.textContent = pid === me ? `${name} (you)` : name;
+  card.append(c, v, n);
+
+  if (sub) {
+    const s = document.createElement('span');
+    s.className = 'sub';
+    s.textContent = sub;
+    card.appendChild(s);
+  }
+  return card;
+}
+
+/**
+ * The awards beside the scoreboard. Each one is skipped rather than shown empty:
+ * a "most firsts" card reading 0 is noise, and an average over a single correct
+ * answer is not an average. Leaderboard order breaks ties, so a tie goes to
+ * whoever placed higher overall.
+ *
+ * Solo has nobody to be honoured against -- the recap line already carries the
+ * one stat that means anything on your own -- so the whole block stays hidden.
+ */
+function buildHonors(leaderboard, fastest, solo) {
+  el.honors.innerHTML = '';
+  if (solo || leaderboard.length < 2) {
+    el.honors.classList.add('hidden');
+    return;
+  }
+
+  const best = (pick, ok) => leaderboard.reduce((a, b) => {
+    if (!ok(b)) return a;
+    return !a || pick(b) < pick(a) ? b : a;
+  }, null);
+
+  const cards = [];
+
+  const most = leaderboard.reduce(
+    (a, b) => ((b.firsts || 0) > (a?.firsts || 0) ? b : a),
+    null
+  );
+  if (most && most.firsts) {
+    cards.push({
+      cap: 'Most firsts',
+      value: String(most.firsts),
+      name: most.name,
+      pid: most.pid,
+      sub: `beat everyone to ${most.firsts === 1 ? 'a song' : `${most.firsts} songs`}`
+    });
+  }
+
+  if (fastest) {
+    cards.push({
+      cap: 'Fastest solve',
+      value: secs(fastest.ms),
+      name: fastest.name,
+      pid: fastest.pid,
+      sub: `“${fastest.title}”`
+    });
+  }
+
+  // Two correct is the floor for an average: one lucky guess would otherwise
+  // win this outright over someone who answered every round.
+  const steady = best((e) => e.avgMs, (e) => e.avgMs != null && e.correct > 1);
+  if (steady) {
+    cards.push({
+      cap: 'Lowest average',
+      value: secs(steady.avgMs),
+      name: steady.name,
+      pid: steady.pid,
+      sub: `across ${steady.correct} solves`
+    });
+  }
+
+  el.honors.classList.toggle('hidden', !cards.length);
+  cards.forEach((c, i) => {
+    const card = honorCard(c);
+    card.style.setProperty('--i', i);
+    el.honors.appendChild(card);
+  });
+}
+
 /** The artwork square, or a note glyph where iTunes had none. */
 function songArt(song) {
   const box = document.createElement('span');
@@ -1497,6 +1633,7 @@ socket.on('game:over', (summary) => {
   clearRoundBoard();
 
   buildLeaderboard(leaderboard, rounds, solo);
+  buildHonors(leaderboard, summary.fastest, solo);
   buildRecap(songs, solo);
 
   setDotted(el.finalSub, [
@@ -1507,10 +1644,11 @@ socket.on('game:over', (summary) => {
   ]);
 
   // The two things a scoreboard cannot show: how many nobody got, and the single
-  // quickest answer of the game.
+  // quickest answer of the game. The quickest answer moves up into an honours
+  // card when there is one, so it is only repeated here when there is not.
   const notes = [];
   if (summary.missed) notes.push(`${summary.missed} unsolved`);
-  if (summary.fastest) {
+  if (summary.fastest && el.honors.classList.contains('hidden')) {
     const who = solo || summary.fastest.pid === me ? '' : `${summary.fastest.name}, `;
     notes.push(`fastest ${who}${secs(summary.fastest.ms)} — “${summary.fastest.title}”`);
   }
@@ -1688,7 +1826,10 @@ el.guessBar.addEventListener('submit', (e) => {
  * During a live round the chat box is the guess box (skribbl style). Solo
  * players have no sidebar, so they get the standalone bar under the player.
  */
+let guessLive = false;
+
 function setGuessing(live) {
+  guessLive = live;
   const solo = !!(room && room.solo);
   const solved = !!(round && round.solved);
   // Multiple choice answers with a card, so neither box is a guess box -- the
@@ -1696,9 +1837,31 @@ function setGuessing(live) {
   const choosing = !!(round && round.mode === 'choice');
   const guessing = live && !solved && !choosing;
 
-  el.guessBar.classList.toggle('hidden', !solo || choosing);
-  el.guessInput.disabled = !guessing;
-  el.guessInput.placeholder = solved ? 'You got it!' : 'Type your guess…';
+  /*
+   * Solo gets the bar because there is no sidebar to type into. A phone gets it
+   * for a different reason: the chat box is below a screen and a half of stage,
+   * so answering there means answering a title that has scrolled away. Pinned to
+   * the bottom of the screen with the blanks pinned to the top, both ends of the
+   * job are in view at once.
+   */
+  const barred = solo || NARROW.matches;
+  // On a phone the bar is the only input on screen, so out of a live round it
+  // carries ordinary chat rather than sitting there dead. Solo has nobody to
+  // talk to, so there it really is a guess box or nothing.
+  const asChat = barred && !solo && !guessing;
+
+  el.guessBar.classList.toggle('hidden', !barred || choosing);
+  // The pinned bar and the chat box send the same thing to the same place, and
+  // on a phone they end up stacked one above the other at the bottom of the
+  // page. Whenever the bar is up, it is the input; the chat below it goes back
+  // to being a log.
+  document.body.classList.toggle('bar-input', barred && !choosing);
+  el.guessInput.disabled = !guessing && !asChat;
+  el.guessInput.placeholder = guessing
+    ? 'Type your guess…'
+    : solved
+      ? (solo ? 'You got it!' : 'Chat with the others who got it…')
+      : asChat ? 'Say something…' : 'Type your guess…';
 
   el.chatInput.placeholder = guessing
     ? 'Type your guess…'
@@ -1708,13 +1871,19 @@ function setGuessing(live) {
   el.chatMode.textContent = guessing ? 'GUESSING' : '';
   el.chatMode.className = guessing ? 'chat-mode-live' : '';
 
-  if (guessing) {
+  // Never on a phone: focusing throws the keyboard up over half the screen at
+  // the start of every round, whether or not the player meant to type.
+  if (guessing && !NARROW.matches) {
     const box = solo ? el.guessInput : el.chatInput;
     if (document.activeElement !== box) box.focus();
   }
 
   setSkip(live);
 }
+
+// Turning a phone sideways can cross the boundary in either direction, and the
+// bar has to appear or go away with it.
+NARROW.addEventListener('change', () => setGuessing(guessLive));
 
 /**
  * Giving up on the round. Solo only -- in a room the clock belongs to everyone,

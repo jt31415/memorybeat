@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- resizes-content so an on-screen keyboard shortens the page instead of
+       sliding a full-height page up behind itself. Chrome honours it outright;
+       iOS ignores it, which is what the visual-viewport insets in room.js are
+       for. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
   <title>MemoryBeat — Room</title>
   <meta name="theme-color" content="#06070a" />
 
@@ -199,6 +203,12 @@
           <!-- What was played, and the one stat worth a sentence of its own. -->
           <p class="final-sub" id="final-sub"></p>
           <ol id="leaderboard"></ol>
+
+          <!-- The three things a points column hides: who buzzed in first most
+               often, the single quickest answer of the game, and who was
+               steadiest across all of them. Built only when there is someone to
+               compare against. -->
+          <div class="honors hidden" id="honors"></div>
 
           <!-- Every song of the game, with who got it and how fast. The list is
                its own scroller so a twenty-round game cannot push "Play again"

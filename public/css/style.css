@@ -83,6 +83,26 @@ button { cursor: pointer; background: none; border: none; }
 
 ::selection { background: var(--amber); color: #14100a; }
 
+/* Every scroller in the app gets the same thin, borderless bar. Set once and
+   globally rather than per-panel: the ones that were missed -- the room stage
+   most of all -- fell back to the platform bar, a wide grey slab against the
+   dark panels. The transparent border plus background-clip is what insets the
+   thumb, so it floats in the track instead of butting against the edge. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
 :focus-visible {
   outline: 2px solid var(--amber);
   outline-offset: 2px;
@@ -404,18 +424,7 @@ input::placeholder { color: rgba(226, 233, 246, 0.24); }
   overflow-y: auto;
   /* Room for the scrollbar so it never sits on top of a pack's border. */
   padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
 }
-.packs::-webkit-scrollbar { width: 8px; }
-.packs::-webkit-scrollbar-track { background: transparent; }
-.packs::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-.packs::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
 
 .pack {
   display: flex;
@@ -514,20 +523,6 @@ input::placeholder { color: rgba(226, 233, 246, 0.24); }
      to reach. So the config gives up height first and scrolls itself. */
   min-height: min(280px, 38vh);
   padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
-}
-.lobby-config::-webkit-scrollbar { width: 8px; }
-.lobby-config::-webkit-scrollbar-track { background: transparent; }
-.lobby-config::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-.lobby-config::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
-  background-clip: content-box;
 }
 
 /* Inside the scroller the grid is full height and scrolls with everything else,
@@ -586,7 +581,10 @@ input::placeholder { color: rgba(226, 233, 246, 0.24); }
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: 18px 26px 24px;
+  /* Named because the phone layout has to cancel it: the pinned answer bar
+     bleeds to both screen edges with a negative margin of exactly this. */
+  --stage-pad: 26px;
+  padding: 18px var(--stage-pad) 24px;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -1313,18 +1311,7 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
 }
-.chat-log::-webkit-scrollbar { width: 8px; }
-.chat-log::-webkit-scrollbar-track { background: transparent; }
-.chat-log::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-.chat-log::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
 
 .msg {
   font-size: 13.5px;
@@ -1507,7 +1494,16 @@ input[type="range"]::-moz-range-thumb {
 /* Wider than the 520px the scoreboard alone needed: the song list underneath
    carries artwork, a title, an artist and a result, and squeezing those into a
    narrow column makes every title wrap. */
-.final { width: min(660px, 100%); }
+/* The bottom padding belongs on the card, not on the stage around it. Once the
+   scoreboard outgrows the window .lobby stops stretching and the card spills out
+   of its box, and a scroller only guarantees room for boxes it actually
+   contains -- the stage's own padding ended up above the spill, leaving "Play
+   again" flush against the bottom edge. Padding here is inside the card's box,
+   so it is scrolled to either way. */
+.final {
+  width: min(660px, 100%);
+  padding: 20px 0 24px;
+}
 .final h2 {
   margin: 0;
   font-family: var(--display);
@@ -1562,6 +1558,64 @@ input[type="range"]::-moz-range-thumb {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------------------------------------------------------------- honours */
+
+/* Three at most, and any of them may be missing, so auto-fit rather than a
+   fixed three-column grid -- two cards should fill the width, not leave a hole
+   where the third would have been. */
+.honors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0 0 22px;
+}
+.honor {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+  text-align: left;
+  min-width: 0;
+  /* Continues the scoreboard's cascade rather than restarting it, so the awards
+     land just after the last rank rather than alongside the first. */
+  animation: rank-in 0.5s var(--ease) both;
+  animation-delay: calc(220ms + var(--i, 0) * 70ms);
+}
+.honor .cap {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.honor .val {
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+/* The name is the tinted part: same colour as that player's scoreboard row, so
+   the two read as one thing without needing to match names up. */
+.honor .nm {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--hue, var(--text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.honor .sub {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ------------------------------------------------------------- game recap */
 
 .recap {
@@ -1599,14 +1653,6 @@ input[type="range"]::-moz-range-thumb {
   max-height: min(320px, 38vh);
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-.recap-list::-webkit-scrollbar { width: 8px; }
-.recap-list::-webkit-scrollbar-track { background: transparent; }
-.recap-list::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
 }
 
 .song {
@@ -1721,7 +1767,10 @@ input[type="range"]::-moz-range-thumb {
   .room-layout { grid-template-columns: 1fr; height: auto; min-height: 100%; }
   .sidebar { border-left: none; border-top: 1px solid var(--line); height: 46vh; }
   .scores { max-height: 34%; }
-  .viz-wrap { min-height: 290px; }
+  /* The meter is the one thing on the round screen that is only ever
+     decoration, so it is what gives up height to fit the blanks, the clock and
+     the guess box on one screen. */
+  .viz-wrap { min-height: 240px; }
   .viz-center { width: min(70%, 210px); }
   .viz-face { width: 92px; height: 92px; }
   .timer { font-size: 42px; }
@@ -1733,6 +1782,81 @@ input[type="range"]::-moz-range-thumb {
   .mode-toggle { grid-template-columns: 1fr; }
   .choices { grid-template-columns: 1fr; gap: 8px; }
   .choice { padding: 10px 14px; }
+
+  /* ---------------------------------------------- phone answering layout */
+
+  /*
+   * Guessing on a phone used to mean typing blind. The box you type into is the
+   * chat, which sits below the whole stage, so opening the keyboard scrolled the
+   * blanked-out title clean off the screen -- you were naming a song you could
+   * no longer see. The fix is to put the two things you actually answer with at
+   * opposite edges of the screen and leave everything else to scroll between
+   * them: blanks pinned to the top, an input pinned to the bottom.
+   *
+   * --vv-top / --vv-bottom are the visual-viewport insets, kept current by
+   * room.js. On iOS the keyboard shrinks the visual viewport and leaves the
+   * layout at full height, so without them "top" and "bottom" mean the top and
+   * bottom of a page the keyboard is covering half of.
+   */
+
+  /* Sticky resolves against the nearest scroll container. The stage is one, and
+     at this width it does not scroll -- the page does -- so its overflow has to
+     go or the pin never engages. */
+  .stage { overflow: visible; }
+
+  .play .answer-slot {
+    position: sticky;
+    top: var(--vv-top, 0px);
+    z-index: 6;
+    /* Edge to edge: at 100% width the meter would still scroll past in the
+       stage's side gutters, which reads as a leak rather than a bar. */
+    width: auto;
+    margin: 0 calc(-1 * var(--stage-pad));
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    /* Opaque enough to scroll under, sheer enough to keep the backdrop. */
+    background: rgba(10, 12, 17, 0.93);
+    backdrop-filter: blur(12px);
+  }
+  .play .answer-slot.solved { background: rgba(13, 40, 30, 0.95); }
+
+  /*
+   * Fixed rather than sticky: sticky would let go the moment you scrolled past
+   * the play area into the chat, which is exactly when you are most likely to
+   * still be mid-guess.
+   */
+  .guess-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: var(--vv-bottom, 0px);
+    z-index: 7;
+    max-width: none;
+    margin: 0;
+    gap: 8px;
+    padding: 8px 12px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    background: rgba(6, 7, 10, 0.94);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--line);
+  }
+  /* 16px exactly: iOS zooms the whole page in on focusing anything smaller, and
+     a zoomed page puts the blanks back off the edge of the screen. */
+  .guess-bar input,
+  .chat-form input { font-size: 16px; }
+  .guess-bar input { padding: 11px 16px; }
+  .guess-bar .btn { padding-left: 18px; padding-right: 18px; }
+
+  /* Two boxes that send the same thing to the same place, stacked on top of each
+     other at the bottom of the page, is just a question about which one to use.
+     While the bar is up it is the input and the chat is a log. */
+  body.in-play.bar-input .chat-form { display: none; }
+
+  /* The bar is out of the flow, so the bottom of the page has to be told to
+     stop underneath it -- otherwise it sits on top of the newest message in the
+     chat. */
+  body.in-play .sidebar { padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* The cards need the room, so the meter gives some of it back. */
@@ -1757,13 +1881,21 @@ input[type="range"]::-moz-range-thumb {
 /* On a phone the top bar has no room for the pack name; it is already spelled
    out in the lobby's settings line. */
 @media (max-width: 560px) {
-  .stage { padding: 14px 14px 18px; }
+  .stage { --stage-pad: 14px; padding: 14px var(--stage-pad) 18px; }
+  /* Shorter still on a phone-sized screen, where the keyboard takes roughly
+     half of what there is. */
+  .viz-wrap { min-height: 200px; }
   .topbar { gap: 10px; }
   .topbar .meta, .topbar .sep-pack { display: none; }
   input[type="range"] { width: 58px; }
   /* The page scrolls on a phone anyway, so the recap can be taller than the
      bounded box a desktop stage needs. */
   .recap-list { max-height: 52vh; }
+  /* Two up rather than one: three cards stacked would be most of a phone screen
+     of awards before the song list is reached. */
+  .honors { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 6px; }
+  .honor { padding: 9px 11px; }
+  .honor .val { font-size: 17px; }
   /* Side by side, the summary wraps into a ragged block against the heading;
      stacked it reads as one line of small print under it. */
   .recap-head { flex-direction: column; align-items: flex-start; gap: 3px; }
