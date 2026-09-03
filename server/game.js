@@ -32,6 +32,24 @@ const DEFAULT_ROUNDS = 10;
  */
 const MIN_ROUNDS = 3;
 const MAX_ROUNDS = 20;
+
+/**
+ * How long a vote to remove somebody stays open before it lapses.
+ *
+ * A minute is long enough for a room that is mid-round to notice it and short
+ * enough that a vote nobody cared about does not sit there for the rest of the
+ * game blocking the next one.
+ */
+const KICK_VOTE_MS = 60000;
+/**
+ * How long somebody the room voted out is kept out for.
+ *
+ * There has to be *some* period, or a kick is only a strongly worded suggestion
+ * -- the room code is in their address bar and rejoining is one reload. Ten
+ * minutes is about a game and a half: past the point of the disruption, and well
+ * short of a life sentence in a room that will be reaped anyway.
+ */
+const KICK_BAN_MS = 10 * 60 * 1000;
 // How many recently played songs a room avoids repeating. Independent shuffles
 // repeat far more than people expect -- drawing 10 from 120 gives two clean
 // games in a row only ~41% of the time -- so recent picks are held back.
@@ -197,6 +215,16 @@ class Room {
     this.packPositions = null;
 
     this.players = new Map(); // pid -> player
+    /**
+     * A vote to remove somebody, or null. See startKick.
+     *
+     * One at a time, deliberately: two simultaneous votes are impossible to
+     * follow in a sidebar and make "a majority" mean two different things at
+     * once.
+     */
+    this.kickVote = null;
+    // pid -> when they may come back, for people the room has voted out.
+    this.banned = new Map();
     this.state = 'lobby';     // lobby | loading | countdown | playing | reveal | ended
     this.tracks = [];
     this.roundIndex = -1;
@@ -282,10 +310,17 @@ class Room {
     if (heir) this.hostPid = heir.pid;
   }
 
-  removePlayer(pid) {
+  /**
+   * @param {string} pid
+   * @param {{force?: boolean}} [opts] force drops the player outright even
+   *        mid-game, where an ordinary departure keeps the seat warm for a
+   *        reconnect. Only a kick forces it: somebody the room has voted out
+   *        must not still be sitting in the scoreboard.
+   */
+  removePlayer(pid, opts = {}) {
     const player = this.players.get(pid);
     if (!player) return;
-    if (this.state === 'lobby' || this.state === 'ended') {
+    if (opts.force || this.state === 'lobby' || this.state === 'ended') {
       this.players.delete(pid);
     } else {
       player.connected = false; // keep the score around for a reconnect
@@ -308,6 +343,244 @@ class Room {
     // the lobby: mid-game the pool has already been drawn from, and re-settling
     // it would wipe the history and the round count under a game in progress.
     if (this.mix && (this.state === 'lobby' || this.state === 'ended')) this.recomputePack();
+
+    // A vote can lose its subject, and it always loses a voter -- either way the
+    // arithmetic it was waiting on has changed.
+    if (this.kickVote) {
+      if (this.kickVote.targetPid === pid) this.endKick('left');
+      else this.tallyKick();
+    }
+    // The round may have been waiting on the person who just went.
+    this.recheckRound();
+  }
+
+  /**
+   * Move the round on if the only people it was waiting for have gone.
+   *
+   * Both of the "is everyone done" checks live here rather than at their call
+   * sites, because a player leaving or being removed can satisfy either one
+   * without anybody having done anything -- and a round that sits out its full
+   * thirty seconds waiting on somebody who is no longer in the room is the most
+   * visible way that goes wrong.
+   */
+  recheckRound() {
+    if (!this.round) return;
+
+    if (this.state === 'countdown') {
+      const active = this.contenders();
+      if (active.length && active.every((p) => this.round.ready.has(p.pid))) {
+        this.clearTimers();
+        this.later(() => this.beginRound(), 250);
+      }
+      return;
+    }
+    if (this.state !== 'playing') return;
+
+    // Picking rounds are over once everyone has committed, right or wrong;
+    // typing rounds run until everyone still playing has it.
+    if (this.mode === 'choice') return this.endIfEveryoneAnswered();
+    const active = this.contenders();
+    if (active.length && active.every((p) => p.solved)) {
+      this.clearTimers();
+      this.later(() => this.endRound(), 900);
+    }
+  }
+
+  /* ------------------------------------------------------------ kick votes */
+
+  /** Whether this player is currently shut out, sweeping the list as it goes. */
+  bannedUntil(pid) {
+    const until = this.banned.get(pid);
+    if (!until) return 0;
+    if (until <= Date.now()) {
+      this.banned.delete(pid);
+      return 0;
+    }
+    return until;
+  }
+
+  /** Everyone entitled to vote: those present, minus the person in question. */
+  kickVoters(targetPid) {
+    return this.activePlayers().filter((p) => p.pid !== targetPid);
+  }
+
+  /**
+   * A simple majority of them, and never fewer than two.
+   *
+   * The floor is what stops a vote being a unilateral power. Without it a room
+   * of two needs one vote, so a guest could throw the host out of their own
+   * room -- and worse, a vote opened while three people were present could be
+   * carried by its proposer alone the moment the third walked out. Two people
+   * therefore cannot vote each other out at all: the host removes, and the
+   * guest leaves.
+   */
+  kickThreshold(voterCount) {
+    return Math.max(2, Math.floor(voterCount / 2) + 1);
+  }
+
+  /**
+   * Somebody proposing that a player be removed.
+   *
+   * The host does not vote, they decide: it is their room, they already choose
+   * everything else about it, and a host who has to canvass support to remove
+   * somebody spoiling the answers in chat has no authority worth the name.
+   * Everybody else gets a vote, and a majority carries it.
+   *
+   * The host can be the target of one. That is deliberate -- it is the room's
+   * only recourse against a host who has wandered off or turned on it -- and it
+   * is a high bar by construction, since the host is excluded from the vote they
+   * are the subject of and the rest of the room has to agree.
+   */
+  startKick(pid, targetPid) {
+    if (this.solo || this.daily) return;
+    const by = this.players.get(pid);
+    const target = this.players.get(String(targetPid || ''));
+    if (!by || !by.connected || !target || !target.connected) return;
+    if (by.pid === target.pid) return;
+    if (this.kickVote) {
+      this.toPlayer(pid, 'room:error', { message: 'A vote is already running.' });
+      return;
+    }
+
+    if (pid === this.hostPid) {
+      this.kick(target.pid, `${target.name} was removed by the host.`);
+      return;
+    }
+
+    const voters = this.kickVoters(target.pid);
+    // A vote nobody could carry is refused rather than opened and left to
+    // lapse: with only one other person here, "the room" is one opinion.
+    if (voters.length < 2) {
+      this.toPlayer(pid, 'room:error', {
+        message: 'There is nobody else here to vote with you.'
+      });
+      return;
+    }
+
+    this.kickVote = {
+      targetPid: target.pid,
+      targetName: target.name,
+      byPid: by.pid,
+      byName: by.name,
+      // pid -> true/false. Proposing is voting yes; nobody has to press twice.
+      votes: new Map([[by.pid, true]]),
+      endsAt: Date.now() + KICK_VOTE_MS,
+      // Not this.later(): every round boundary calls clearTimers(), which would
+      // quietly cancel a vote that has nothing to do with the round.
+      timer: setTimeout(() => this.endKick('lapsed'), KICK_VOTE_MS)
+    };
+    this.kickVote.timer.unref?.();
+
+    this.system('kick', `${by.name} started a vote to remove ${target.name}.`, {
+      pid: by.pid,
+      name: by.name,
+      targetPid: target.pid,
+      targetName: target.name,
+      needed: this.kickThreshold(voters.length)
+    });
+    this.tallyKick();
+  }
+
+  /** One vote each, and no changing your mind -- a vote you can flip turns a
+   *  minute-long window into a game of who clicks last. */
+  castKick(pid, yes) {
+    const vote = this.kickVote;
+    if (!vote) return;
+    const voter = this.players.get(pid);
+    if (!voter || !voter.connected) return;
+    if (pid === vote.targetPid || vote.votes.has(pid)) return;
+    vote.votes.set(pid, !!yes);
+    this.tallyKick();
+  }
+
+  /**
+   * Count what is in, and decide whether there is anything left to wait for.
+   *
+   * Only votes from people still in the room count, so a vote does not carry on
+   * the strength of somebody who has since walked out. Failing early when the
+   * remaining voters could no longer carry it matters as much as passing: it is
+   * what stops a rejected vote holding the one slot for another minute.
+   */
+  tallyKick() {
+    const vote = this.kickVote;
+    if (!vote) return;
+
+    const voters = this.kickVoters(vote.targetPid);
+    const needed = this.kickThreshold(voters.length);
+    let yes = 0;
+    let cast = 0;
+    for (const voter of voters) {
+      if (!vote.votes.has(voter.pid)) continue;
+      cast += 1;
+      if (vote.votes.get(voter.pid)) yes += 1;
+    }
+
+    if (yes >= needed) {
+      const name = vote.targetName;
+      const targetPid = vote.targetPid;
+      this.endKick('passed');
+      this.kick(targetPid, `${name} was voted out ${yes}-${cast - yes}.`);
+      return;
+    }
+    // Everybody who could still say yes, said nothing yet.
+    if (yes + (voters.length - cast) < needed) {
+      this.endKick('failed');
+      return;
+    }
+    this.syncState();
+  }
+
+  /**
+   * Close the vote. `outcome` is why, and only the ones the room is still
+   * waiting on are worth a line of chat -- a vote that passed is announced by
+   * the kick itself, and one whose subject left explains itself.
+   */
+  endKick(outcome) {
+    const vote = this.kickVote;
+    if (!vote) return;
+    clearTimeout(vote.timer);
+    this.kickVote = null;
+
+    if (outcome === 'failed') {
+      this.system('kick', `The vote to remove ${vote.targetName} did not pass.`, {
+        targetPid: vote.targetPid,
+        targetName: vote.targetName
+      });
+    } else if (outcome === 'lapsed') {
+      this.system('kick', `The vote to remove ${vote.targetName} ran out of time.`, {
+        targetPid: vote.targetPid,
+        targetName: vote.targetName
+      });
+    }
+    this.syncState();
+  }
+
+  /**
+   * Remove a player and keep them out for a while.
+   *
+   * The socket is detached from the room as well as the player from the list:
+   * without that they would go on receiving everything the room broadcasts,
+   * including the answers, while sitting on the join screen.
+   */
+  kick(targetPid, announcement) {
+    const target = this.players.get(targetPid);
+    if (!target) return;
+
+    this.banned.set(targetPid, Date.now() + KICK_BAN_MS);
+    this.toPlayer(targetPid, 'room:kicked', {
+      message: 'You were removed from this room.'
+    });
+    const socket = target.socketId && this.io.sockets.sockets.get(target.socketId);
+    if (socket) {
+      socket.leave(this.code);
+      if (socket.data) socket.data.code = null;
+    }
+
+    // Forced, so a kick mid-game does not leave them greyed out in the
+    // scoreboard as though they might be coming back.
+    this.removePlayer(targetPid, { force: true });
+    this.system('kick', announcement, { targetPid, targetName: target.name });
+    this.syncState();
   }
 
   activePlayers() {
@@ -368,6 +641,28 @@ class Room {
        * here rather than keeping a second copy of it locally.
        */
       picks: this.mix ? this.pickSummaries() : null,
+      /**
+       * The vote to remove somebody, if one is running.
+       *
+       * Sent to everybody including its subject: they are going to find out one
+       * way or the other, and finding out by being thrown out -- with no chance
+       * to say anything in the thirty seconds beforehand -- is the worse of the
+       * two. `voted` is only pids, so each client can tell whether it is still
+       * being waited on without learning which way anybody went.
+       */
+      kickVote: this.kickVote
+        ? {
+          targetPid: this.kickVote.targetPid,
+          targetName: this.kickVote.targetName,
+          byName: this.kickVote.byName,
+          endsAt: this.kickVote.endsAt,
+          needed: this.kickThreshold(this.kickVoters(this.kickVote.targetPid).length),
+          yes: [...this.kickVote.votes.entries()]
+            .filter(([pid, y]) => y && pid !== this.kickVote.targetPid && this.players.has(pid))
+            .length,
+          voted: [...this.kickVote.votes.keys()]
+        }
+        : null,
       // The client hides every lobby control for a daily room -- there is
       // nothing in there it is allowed to change.
       daily: this.daily ? { day: this.daily.day } : null,
@@ -548,14 +843,10 @@ class Room {
       of: this.contenders().length
     });
 
-    // Typing rounds run until everyone has it right; picking rounds are over
-    // as soon as everyone has committed, right or wrong.
-    if (this.mode === 'choice') return this.endIfEveryoneAnswered();
-    const active = this.contenders();
-    if (active.length && active.every((p) => p.solved)) {
-      this.clearTimers();
-      this.later(() => this.endRound(), 900);
-    }
+    // Typing rounds run until everyone has it right; picking rounds are over as
+    // soon as everyone has committed, right or wrong. Both live in recheckRound,
+    // since a player leaving can settle either of them too.
+    this.recheckRound();
   }
 
   /* -------------------------------------------------------------- settings */
@@ -1163,11 +1454,7 @@ class Room {
   markReady(pid) {
     if (!this.round || this.state !== 'countdown') return;
     this.round.ready.add(pid);
-    const active = this.contenders();
-    if (active.length && active.every((p) => this.round.ready.has(p.pid))) {
-      this.clearTimers();
-      this.later(() => this.beginRound(), 250);
-    }
+    this.recheckRound();
   }
 
   beginRound() {
@@ -1442,6 +1729,8 @@ class Room {
 
   destroy() {
     this.clearTimers();
+    // Not one of this.timers: a vote outlives round boundaries by design.
+    if (this.kickVote) clearTimeout(this.kickVote.timer);
     rooms.delete(this.code);
   }
 }

@@ -92,11 +92,13 @@ const el = {
   dailyNote: $('daily-note'),
   scores: $('scores'),
   pcount: $('pcount'),
+  kickBar: $('kick-bar'),
   chatLog: $('chat-log'),
   chatForm: $('chat-form'),
   chatInput: $('chat-input'),
   chatNote: $('chat-note'),
   overlay: $('join-overlay'),
+  joinPanel: $('join-panel'),
   joinName: $('join-name'),
   joinPass: $('join-pass'),
   joinPassWrap: $('join-pass-wrap'),
@@ -118,6 +120,9 @@ let me = null;
 let room = null;
 let round = null;      // { index, total, timeLimit, startAt, solved, mode, picked }
 let joined = false;
+// True for a single player game, known from /api/room before the join. It is
+// what suppresses the join gate; state.solo says the same thing afterwards.
+let soloRoom = false;
 
 /* ------------------------------------------------------------ identity hue */
 
@@ -317,6 +322,9 @@ function attemptJoin(password) {
           el.joinPass.focus();
         }
         el.joinError.textContent = (res && res.error) || 'Could not join.';
+        // A solo room lets itself in with no gate on screen, so a refusal has
+        // nowhere to be read -- put the panel up to carry the message.
+        revealGate();
         return;
       }
       joined = true;
@@ -346,6 +354,9 @@ socket.on('connect', () => {
 socket.on('room:kicked', ({ message }) => {
   joined = false;
   el.overlay.classList.remove('hidden');
+  // A solo game never put the gate up, so there would be nothing behind the
+  // backdrop to read this in.
+  revealGate();
   el.joinError.textContent = message || 'You were disconnected.';
 });
 
@@ -1021,6 +1032,9 @@ function applyState(state) {
   assignHues(state.players);
 
   el.layout.classList.toggle('solo', !!state.solo);
+  // A single player game is not a room: the code is an implementation detail,
+  // so the top bar names the mode the way the daily does.
+  if (state.solo && !state.daily) el.topCode.textContent = 'Solo';
   el.topPack.textContent = state.packName;
   el.pcount.textContent = state.solo ? '' : `${state.players.filter((p) => p.connected).length}/${state.maxPlayers}`;
 
@@ -1090,6 +1104,7 @@ function applyState(state) {
   }
 
   renderRoster(state);
+  renderKickBar(state);
   renderScores(state.players);
 
   if (state.state === 'lobby' || state.state === 'loading') {
@@ -1108,6 +1123,10 @@ function applyState(state) {
 
 function renderRoster(state) {
   el.roster.innerHTML = '';
+  // Nobody needs telling who is in a room of one, least of all that they are
+  // its host.
+  el.roster.classList.toggle('hidden', !!state.solo);
+  if (state.solo) return;
   for (const p of state.players) {
     const chip = document.createElement('span');
     chip.className = 'chip' + (p.connected ? '' : ' away');
@@ -1121,6 +1140,128 @@ function renderRoster(state) {
     }
     el.roster.appendChild(chip);
   }
+}
+
+/* -------------------------------------------------------------- kick votes */
+
+/*
+ * Getting somebody out of the room.
+ *
+ * The server owns all of it (see Room#startKick): who may propose, what carries
+ * it, and whether the host simply decides. This end is two pieces -- a small ✕
+ * on each player's row, and one bar under the heading that is either a
+ * confirmation or the vote in progress.
+ *
+ * The ✕ never kicks on its own. A one-click misfire that threw somebody out of
+ * a game would be unrecoverable, so it opens the bar and the bar has the button
+ * that means it.
+ */
+
+// Who we are proposing against, before anything has been sent. Local only.
+let kickAsking = null;
+// Ticks the countdown on a live vote. The round has its own clock and this must
+// not touch it.
+let kickTicker = null;
+
+function askKick(pid) {
+  if (!room || room.solo || room.kickVote) return;
+  kickAsking = pid === kickAsking ? null : pid;
+  renderKickBar(room);
+}
+
+function nameOf(state, pid) {
+  const player = (state.players || []).find((p) => p.pid === pid);
+  return player ? player.name : 'them';
+}
+
+/** A row of the bar: some words and some buttons. */
+function kickBarRow(text, buttons) {
+  el.kickBar.innerHTML = '';
+  const line = document.createElement('span');
+  line.className = 'text';
+  line.textContent = text;
+  el.kickBar.appendChild(line);
+  if (!buttons.length) return;
+  const row = document.createElement('span');
+  row.className = 'acts';
+  for (const [label, tone, onClick] of buttons) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `act${tone ? ` ${tone}` : ''}`;
+    btn.textContent = label;
+    btn.addEventListener('click', onClick);
+    row.appendChild(btn);
+  }
+  el.kickBar.appendChild(row);
+}
+
+function renderKickBar(state) {
+  const vote = state.kickVote;
+  const show = !state.solo && (!!vote || !!kickAsking);
+  el.kickBar.classList.toggle('hidden', !show);
+  el.kickBar.classList.toggle('live', !!vote);
+  if (!show) {
+    clearInterval(kickTicker);
+    kickTicker = null;
+    return;
+  }
+
+  // A vote outranks our own half-finished proposal -- somebody got there first.
+  if (vote) {
+    kickAsking = null;
+    const left = Math.max(0, Math.ceil((vote.endsAt - Date.now()) / 1000));
+    if (vote.targetPid === me) {
+      kickBarRow(`The room is voting on removing you — ${left}s`, []);
+    } else if (vote.voted.includes(me)) {
+      kickBarRow(
+        `Remove ${vote.targetName}? ${vote.yes} of ${vote.needed} · ${left}s`,
+        []
+      );
+    } else {
+      kickBarRow(`Remove ${vote.targetName}? ${vote.yes} of ${vote.needed} · ${left}s`, [
+        ['Remove', 'bad', () => socket.emit('room:kickvote', { yes: true })],
+        ['Keep', '', () => socket.emit('room:kickvote', { yes: false })]
+      ]);
+    }
+    // Repainted from the same state every second; nothing here needs the server.
+    if (!kickTicker) kickTicker = setInterval(() => room && renderKickBar(room), 1000);
+    return;
+  }
+
+  clearInterval(kickTicker);
+  kickTicker = null;
+
+  // The host does not canvass support, so say what the button will actually do.
+  const isHost = state.hostPid === me;
+  const who = nameOf(state, kickAsking);
+
+  // A vote needs two people who are not the subject of it (see
+  // Room#kickThreshold). The server refuses this anyway, but its refusal would
+  // land at the far end of the lobby, nowhere near the button that caused it --
+  // so the reason goes where the asking happened.
+  const voters = (state.players || [])
+    .filter((p) => p.connected !== false && p.pid !== kickAsking).length;
+  if (!isHost && voters < 2) {
+    kickBarRow(`There is nobody else here to vote with you on removing ${who}.`, [
+      ['OK', '', () => {
+        kickAsking = null;
+        renderKickBar(room);
+      }]
+    ]);
+    return;
+  }
+
+  kickBarRow(isHost ? `Remove ${who} from the room?` : `Ask the room to remove ${who}?`, [
+    [isHost ? 'Remove' : 'Start vote', 'bad', () => {
+      socket.emit('room:kick', { pid: kickAsking });
+      kickAsking = null;
+      renderKickBar(room);
+    }],
+    ['Cancel', '', () => {
+      kickAsking = null;
+      renderKickBar(room);
+    }]
+  ]);
 }
 
 /* ------------------------------------------------------------------- scores */
@@ -1137,7 +1278,20 @@ const lastScore = new Map();   // pid -> last rendered score
 function buildScoreRow(p) {
   const row = document.createElement('div');
   row.dataset.pid = p.pid;
-  row.innerHTML = '<span class="rank"></span><span class="dot"></span><span class="nm"></span><span class="pts"></span>';
+  row.innerHTML = '<span class="rank"></span><span class="dot"></span><span class="nm"></span>'
+    + '<span class="pts"></span>';
+  // Removing somebody is a thing you do *to a player*, so it lives on their
+  // row rather than in a menu that would need to name them again. Hidden until
+  // the row is hovered or focused within -- see the CSS.
+  const kick = document.createElement('button');
+  kick.className = 'kick';
+  kick.type = 'button';
+  kick.textContent = '✕';
+  kick.addEventListener('click', (e) => {
+    e.stopPropagation();
+    askKick(p.pid);
+  });
+  row.appendChild(kick);
   return row;
 }
 
@@ -1160,6 +1314,15 @@ function renderScores(players) {
     row.querySelector('.rank').textContent = i + 1;
     row.querySelector('.dot').classList.toggle('answered', !!p.answered);
     row.querySelector('.nm').textContent = p.name;
+
+    // No ✕ on your own row, none while a vote is already running, and none for
+    // somebody who has already dropped out -- the server refuses all three.
+    const kick = row.querySelector('.kick');
+    const canKick = !!room && !room.solo && !room.kickVote
+      && p.pid !== me && p.connected !== false;
+    kick.classList.toggle('hidden', !canKick);
+    kick.title = `Remove ${p.name}`;
+    kick.setAttribute('aria-label', `Remove ${p.name}`);
 
     const pts = row.querySelector('.pts');
     pts.textContent = p.score;
@@ -1783,7 +1946,11 @@ function buildLeaderboard(leaderboard, rounds, solo) {
       + '<span class="who"><span class="nm"></span><span class="stat"></span></span>'
       + '<span class="pts"></span>';
     li.querySelector('.rank').textContent = entry.rank;
-    li.querySelector('.nm').textContent = entry.name + (entry.pid === me ? ' (you)' : '');
+    // "(you)" tells one name apart from the others; on your own there are no
+    // others, and the name was never asked for in the first place.
+    li.querySelector('.nm').textContent = solo
+      ? entry.name
+      : entry.name + (entry.pid === me ? ' (you)' : '');
     // An older server sends no per-player stats; the row still works without them.
     if (entry.correct == null) li.querySelector('.stat').remove();
     else setDotted(li.querySelector('.stat'), statLine(entry, rounds, solo));
@@ -2290,19 +2457,48 @@ if (el.joinName.value) {
   el.joinSub.textContent = 'Everything is set — one tap lets the browser play audio.';
   el.joinGo.textContent = 'Enter room';
 }
-setTimeout(() => (el.joinName.value ? el.joinGo : el.joinName).focus(), 50);
+
+/** Put the gate on screen and the cursor where it is wanted. Called once we
+ *  know this is a room somebody has to knock on. */
+function revealGate() {
+  if (joined) return;
+  el.joinPanel.classList.remove('hidden');
+  setTimeout(() => (el.joinName.value ? el.joinGo : el.joinName).focus(), 50);
+}
 
 /*
- * A daily run needs no name -- it plays under the Discord account, which the
- * server reads off the session cookie and this page cannot influence. The gate
- * itself stays: a click is what earns the browser permission to play audio, and
- * a countdown that starts before the tab is allowed to make a sound would cost
- * the player the first round of a game they only get one shot at.
+ * What kind of room this is decides whether there is a gate at all.
+ *
+ * A multiplayer room asks for a name, because you are about to appear in a list
+ * of people. The other two are not that:
+ *
+ *   - A daily run needs no name -- it plays under the Discord account, which the
+ *     server reads off the session cookie and this page cannot influence. The
+ *     gate itself stays, because a click is what earns the browser permission to
+ *     play audio, and a countdown that started before the tab was allowed to
+ *     make a sound would cost the player the first round of a game they only get
+ *     one shot at.
+ *   - A single player game is not a room you join. There is nobody to introduce
+ *     yourself to, no code worth reading and no waiting, so it lets itself in.
+ *     Audio is safe here where it is not for the daily: nothing starts until
+ *     Start game is pressed, and that press is the gesture that unlocks it.
  */
 fetch(`/api/room/${encodeURIComponent(CODE)}`)
   .then((r) => (r.ok ? r.json() : null))
   .then((info) => {
-    if (!info || !info.daily || joined) return;
+    if (joined) return;
+    if (!info) return revealGate(); // gone, or unreachable: let the gate say so
+
+    if (info.solo && !info.daily) {
+      soloRoom = true;
+      // The code is an implementation detail of a game with one player in it.
+      el.topCode.textContent = 'Solo';
+      attemptJoin(storedPass);
+      return;
+    }
+
+    if (!info.daily) return revealGate();
+
     document.querySelector('label[for="join-name"]').classList.add('hidden');
     el.joinName.classList.add('hidden');
     el.joinTitle.textContent = 'Daily challenge';
@@ -2317,6 +2513,7 @@ fetch(`/api/room/${encodeURIComponent(CODE)}`)
       back.href = '/daily';
       back.textContent = 'Back to the daily';
     }
+    el.joinPanel.classList.remove('hidden');
     el.joinGo.focus();
   })
-  .catch(() => {}); // the ordinary gate still works
+  .catch(revealGate); // the ordinary gate still works

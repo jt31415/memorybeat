@@ -1408,6 +1408,76 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 0 0 3px rgba(75, 227, 155, 0.16);
 }
 .score-row.away { opacity: 0.38; filter: saturate(0.3); }
+
+/* Out of the way until wanted: throwing somebody out of a game is not something
+   the scoreboard should be advertising, but it has to be findable without a
+   menu. Kept in the layout at zero opacity so a row never changes width when it
+   appears, and revealed on keyboard focus as well as hover. */
+.score-row .kick {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.16s var(--ease), color 0.16s var(--ease),
+              border-color 0.16s var(--ease), background 0.16s var(--ease);
+}
+.score-row:hover .kick,
+.score-row .kick:focus-visible { opacity: 1; }
+.score-row .kick:hover {
+  color: var(--bad);
+  border-color: rgba(255, 93, 108, 0.5);
+  background: rgba(255, 93, 108, 0.1);
+}
+.score-row .kick.hidden { display: none; }
+
+/* The confirmation, and then the vote. One bar, directly under the heading it
+   belongs to, so it cannot be mistaken for a chat message. */
+.kick-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 12px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(226, 233, 246, 0.03);
+  font-size: 13px;
+}
+/* A vote in progress is the room's business, not a question we asked; amber
+   rather than neutral so it reads as something already happening. */
+.kick-bar.live {
+  border-color: rgba(247, 185, 62, 0.45);
+  background: rgba(247, 185, 62, 0.07);
+}
+.kick-bar .text { color: var(--text); line-height: 1.35; }
+.kick-bar .acts { display: flex; gap: 8px; }
+.kick-bar .act {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: rgba(226, 233, 246, 0.03);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: border-color 0.16s var(--ease), background 0.16s var(--ease),
+              color 0.16s var(--ease);
+}
+.kick-bar .act:hover { border-color: var(--line-strong); color: var(--text); }
+.kick-bar .act.bad { color: var(--bad); border-color: rgba(255, 93, 108, 0.4); }
+.kick-bar .act.bad:hover {
+  background: rgba(255, 93, 108, 0.12);
+  border-color: rgba(255, 93, 108, 0.7);
+}
 /* A score that just went up gets a brief warm flash. */
 .score-row .pts.bumped { animation: bump 0.7s var(--ease); }
 @keyframes bump {

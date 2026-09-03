@@ -427,6 +427,15 @@ io.on('connection', (socket) => {
     if (room.solo && room.hostPid !== pid) {
       return reply({ error: 'That is a single player game.' });
     }
+    // Somebody the room voted out, back with the code still in their address
+    // bar. Checked before the password, since knowing it is not the point.
+    const bannedUntil = room.bannedUntil(pid);
+    if (bannedUntil) {
+      const mins = Math.max(1, Math.ceil((bannedUntil - Date.now()) / 60000));
+      return reply({
+        error: `You were removed from this room. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`
+      });
+    }
     if (!known && room.password && String(opts.password || '') !== room.password) {
       return reply({ error: 'Wrong password.', needPassword: true });
     }
@@ -480,6 +489,16 @@ io.on('connection', (socket) => {
   socket.on('room:pack', (opts) => {
     const room = getRoom(socket.data.code);
     if (room) room.setPacks(socket.data.pid, packIdsFrom(opts));
+  });
+
+  socket.on('room:kick', (opts) => {
+    const room = getRoom(socket.data.code);
+    if (room) room.startKick(socket.data.pid, opts && opts.pid);
+  });
+
+  socket.on('room:kickvote', (opts) => {
+    const room = getRoom(socket.data.code);
+    if (room) room.castKick(socket.data.pid, opts && opts.yes);
   });
 
   socket.on('room:rounds', (opts) => {

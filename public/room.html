@@ -269,6 +269,9 @@
       <div class="side-head">
         <span>Players</span><span class="spacer"></span><span id="pcount"></span>
       </div>
+      <!-- Either a "remove them?" confirmation or a vote in progress. Built by
+           room.js, which is also what keeps it hidden the rest of the time. -->
+      <div class="kick-bar hidden" id="kick-bar" role="status"></div>
       <div class="scores" id="scores"></div>
 
       <div class="chat">
@@ -285,9 +288,14 @@
     </aside>
   </div>
 
-  <!-- join gate -------------------------------------------------------- -->
+  <!-- join gate --------------------------------------------------------
+       The panel starts hidden and is revealed once we know what kind of room
+       this is: a single player game has nobody to introduce yourself to, so it
+       joins itself and the gate never appears. Hiding the panel rather than the
+       whole overlay keeps the backdrop up in the meantime, so the lobby is
+       never briefly clickable underneath. -->
   <div class="overlay" id="join-overlay">
-    <section class="panel" style="max-width:420px">
+    <section class="panel hidden" id="join-panel" style="max-width:420px">
       <h2 id="join-title">Join room</h2>
       <p class="hint" id="join-sub">Pick a name and you're in.</p>
       <label class="field" for="join-name"><span>Your name</span></label>
