@@ -29,21 +29,34 @@ const el = {
   lobbyError: $('lobby-error'),
   codeBadge: $('code-badge'),
   roster: $('roster'),
-  // The host's whole configuration block: packs, difficulty, playlist import and
-  // answer mode, in one scroller. Shown or hidden as a unit.
+  // The configuration block: mode, songs and difficulty, in one scroller.
+  // Shown or hidden as a unit; each section inside decides for itself whether
+  // this browser gets it.
   lobbyConfig: $('lobby-config'),
+  songsBlock: $('songs-block'),
+  songsLabel: $('songs-label'),
   packList: document.querySelector('[data-packs="room"]'),
   packSum: document.querySelector('[data-pack-sum="room"]'),
-  playlistBadge: $('playlist-badge'),
-  playlistSource: $('playlist-source'),
-  playlistName: $('playlist-name'),
-  playlistCount: $('playlist-count'),
+  sourceTabs: [...document.querySelectorAll('.source-tab')],
+  panelPacks: $('panel-packs'),
+  panelPlaylist: $('panel-playlist'),
+  sourceNote: $('source-note'),
+  mixToggle: $('mix-toggle'),
+  // The room's whole pool, spelled out for everyone -- see renderPool.
+  pool: $('pool'),
+  poolLabel: $('pool-label'),
+  poolSum: $('pool-sum'),
+  poolBody: $('pool-body'),
   importUrl: document.querySelector('[data-import-url="room"]'),
   importGo: document.querySelector('[data-import-go="room"]'),
   importNote: document.querySelector('[data-import-note="room"]'),
-  importSum: document.querySelector('[data-import-sum="room"]'),
   modeSwitch: $('mode-switch'),
+  modeToggle: $('mode-toggle'),
   modeBlurb: $('mode-blurb'),
+  roundsBlock: $('rounds-block'),
+  roundStops: $('round-stops'),
+  roundsTime: $('rounds-time'),
+  roundsWarn: $('rounds-warn'),
   choices: $('choices'),
   settings: $('settings-line'),
   difficulty: $('difficulty'),
@@ -336,19 +349,42 @@ socket.on('room:kicked', ({ message }) => {
   el.joinError.textContent = message || 'You were disconnected.';
 });
 
-/* ------------------------------------------------------------- pack switch */
+/* ------------------------------------------------------------ song selection */
 
-// Only the host can switch, and only between games -- mid-game the buttons are
-// hidden entirely rather than shown disabled, since the lobby is not on screen
-// then anyway.
-// Packs are multi-select: the room plays every pack that is on, merged into one
-// list. Clicking sends the whole selection rather than the pack that changed, so
-// a click crossing with a state sync can't leave client and server disagreeing.
+/*
+ * Where the room's songs come from.
+ *
+ * Three things share this block. Packs and an imported playlist are
+ * alternatives -- the server refuses a merge of the two (see
+ * packs.selectPacks) -- so they are tabs, and only the live one is on screen.
+ * Mix is the third, and it is a toggle across both of them: with it on every
+ * player picks their own songs, from either tab, and the room plays all of them
+ * in equal turns.
+ *
+ * Off-mix only the host may change any of it, and only between games. Mid-game
+ * the controls are hidden rather than disabled, since the lobby is not on
+ * screen then anyway.
+ *
+ * Clicking a pack sends the whole selection rather than the pack that changed,
+ * so a click crossing with a state sync can't leave client and server
+ * disagreeing about what is on.
+ */
 let packsLoaded = false;
+
+// id -> summary, for naming packs in the read-only pool readout.
+const packById = new Map();
+
+/** Which tab is showing. Follows the room when the selection changes under us,
+ *  but a deliberate click wins until then -- see syncSourceView. */
+let sourceView = 'packs';
+
+const IMPORT_PREFIX = 'pl:';
+const isImportId = (id) => String(id || '').startsWith(IMPORT_PREFIX);
 
 function renderPackSwitch(packs) {
   el.packList.innerHTML = '';
   for (const pack of packs) {
+    packById.set(pack.id, pack);
     const btn = document.createElement('button');
     btn.className = 'pack';
     btn.dataset.packId = pack.id;
@@ -371,70 +407,256 @@ function renderPackSwitch(packs) {
   packsLoaded = true;
 }
 
-/** The room's packs with one flipped -- unless flipping it off would leave the
- *  room with nothing to play, in which case the selection stands. */
+/**
+ * This browser's own selection.
+ *
+ * Off-mix that is the room's, since only the host can have set it. In a mix
+ * every player has their own, and the one being toggled is always ours -- so
+ * the pack grid is painted from this rather than from the pooled `packIds`,
+ * which would light up everybody else's packs as though we had picked them.
+ */
+function mySelection() {
+  if (!room) return [];
+  if (!room.mix) return room.packIds || [];
+  const mine = (room.picks || []).find((p) => p.pid === me);
+  return (mine && mine.ids) || [];
+}
+
+/** Our selection with one pack flipped -- unless flipping it off would leave
+ *  the room with nothing to play, in which case the selection stands. */
 function toggledSelection(packId) {
-  const current = (room && room.packIds) || [];
+  const current = mySelection();
   // Coming off a playlist there is nothing to toggle against: the server refuses
   // a playlist merged with packs (see packs.selectPacks), so a pack click means
   // "play this instead" and replaces the selection outright.
-  if (room && room.playlist) return [packId];
+  if (current.some(isImportId)) return [packId];
   if (!current.includes(packId)) return current.concat(packId);
-  if (current.length === 1) return current;
+  // A mix contributor may put their last pack down -- the room still has
+  // everybody else's. The host cannot: theirs is the fallback pool.
+  if (current.length === 1) {
+    return room.mix && room.hostPid !== me ? [] : current;
+  }
   return current.filter((id) => id !== packId);
 }
 
-/* Short labels for the playlist badge, in the same house style as the pack
-   icons. Unknown sources fall back to "PL". */
+/* Short labels for a playlist, in the same house style as the pack icons.
+   Unknown sources fall back to "PL". */
 const SOURCE_ICON = { deezer: 'DZ', spotify: 'SP' };
 
-function updatePackSwitch(state, isHost) {
+/** Whether this browser gets to pick songs at all: the host always, everybody
+ *  else only while the room is mixing. */
+function canPickSongs(state) {
   const inLobby = state.state === 'lobby' || state.state === 'ended';
-  const playlist = state.playlist;
+  return !!state && !state.daily && inLobby && (state.hostPid === me || !!state.mix);
+}
 
-  /* The badge is the readout, shown to everyone: it says what the room is
-     playing, which non-hosts have no other way to see in full. Only playlists
-     get one -- a pack selection is already spelled out in the settings line. */
-  el.playlistBadge.classList.toggle('hidden', !playlist || !inLobby);
-  if (playlist && inLobby) {
-    // The pack icons are two- or three-character labels ("80s", "POP"), so a
-    // source gets one to match rather than the first four letters of its name,
-    // which reads as a truncation ("DEEZ").
-    el.playlistSource.textContent = SOURCE_ICON[playlist.source] || 'PL';
-    el.playlistName.textContent = playlist.name;
-    el.playlistCount.textContent =
-      `${(state.packCount || 0).toLocaleString()} songs · every song equally likely`;
+/** The kind of thing our selection last was, so a change of kind can move the
+ *  tab exactly once rather than on every state sync. */
+let lastSourceKind = null;
+
+/**
+ * Follow the room onto the tab its selection is actually on.
+ *
+ * Only on a *change* of kind: importing a playlist moves you to the playlist
+ * tab and clicking a pack moves you back, but neither drags you off the tab you
+ * deliberately opened -- a sync arriving while the host types a playlist link
+ * (somebody joining, a line of chat) must not close the box under them.
+ */
+function syncSourceView(mine) {
+  const kind = mine.some(isImportId) ? 'playlist' : (mine.length ? 'packs' : null);
+  if (kind && kind !== lastSourceKind) sourceView = kind;
+  lastSourceKind = kind;
+}
+
+function paintSourceTabs() {
+  for (const tab of el.sourceTabs) {
+    tab.setAttribute('aria-selected', String(tab.dataset.source === sourceView));
   }
+  el.panelPacks.classList.toggle('hidden', sourceView !== 'packs');
+  el.panelPlaylist.classList.toggle('hidden', sourceView !== 'playlist');
+}
 
-  /* The controls are the host's, and both halves stay up regardless of which is
-     in force. A playlist no longer hides the pack grid: with the import box in
-     here too, switching to a pack is reversible, so there is nothing to protect
-     the host from. The dimming below is what says which side is live. */
-  const canSwitch = isHost && inLobby;
-  el.lobbyConfig.classList.toggle('hidden', !canSwitch || !packsLoaded);
-  if (!canSwitch) return;
+/** The line under the tabs: what mix is, or what it is doing. */
+function sourceNoteFor(state, isHost) {
+  if (!state.mix) {
+    return isHost && !state.solo
+      ? 'Mix lets everyone in the room bring their own songs.'
+      : '';
+  }
+  const picked = (state.picks || []).filter((p) => p.ids.length).length;
+  const waiting = (state.picks || []).length - picked;
+  const mine = mySelection();
+  if (!mine.length) {
+    return isHost
+      ? 'Mix is on — pick your own songs, and so can everybody else.'
+      : 'Mix is on — pick the songs you want in the game.';
+  }
+  return `Mixing ${picked} selection${picked === 1 ? '' : 's'}, sampled in equal turns`
+    + `${waiting ? ` · waiting on ${waiting} more` : ''}.`;
+}
 
-  paintImportState(state);
+function updateSongs(state) {
+  const canPick = canPickSongs(state) && packsLoaded;
+  el.songsBlock.classList.toggle('hidden', !canPick);
+  if (!canPick) return;
 
-  const on = new Set(state.packIds || []);
+  const isHost = state.hostPid === me;
+  const mine = mySelection();
+  syncSourceView(mine);
+  paintSourceTabs();
+  paintImportState();
+
+  // Solo has nobody to mix with, and only the host may throw the switch.
+  el.mixToggle.classList.toggle('hidden', !isHost || !!state.solo);
+  el.mixToggle.setAttribute('aria-checked', String(!!state.mix));
+  el.songsLabel.textContent = state.mix ? 'Your songs' : 'Songs';
+  el.sourceNote.textContent = sourceNoteFor(state, isHost);
+
+  const on = new Set(mine);
   for (const btn of el.packList.querySelectorAll('.pack')) {
     btn.setAttribute('aria-pressed', String(on.has(btn.dataset.packId)));
   }
+
   // The server's count, so it is the merged total with duplicates already
-  // folded together rather than a sum of pack sizes. Dimmed packs are not in
-  // play, so a song count for them would describe nothing.
-  el.packSum.textContent = state.playlist
-    ? 'using playlist'
+  // folded together rather than a sum of pack sizes.
+  const count = state.mix
+    ? ((state.picks || []).find((p) => p.pid === me) || {}).count || 0
+    : state.packCount || 0;
+  el.packSum.textContent = mine.some(isImportId)
+    ? `playlist · ${count.toLocaleString()} songs`
     : (on.size
-      ? `${on.size} pack${on.size > 1 ? 's' : ''} · ${(state.packCount || 0).toLocaleString()} songs`
-      : '');
+      ? `${on.size} pack${on.size > 1 ? 's' : ''} · ${count.toLocaleString()} songs`
+      : 'nothing picked');
 }
+
+/* -------------------------------------------------------------- the readout */
+
+/** One entry in the pool readout: a short icon label and a name. */
+function poolChip({ icon, name, sub, live = true }) {
+  const chip = document.createElement('span');
+  chip.className = `pool-chip${live ? '' : ' idle'}`;
+  const glyph = document.createElement('span');
+  glyph.className = 'icon';
+  glyph.textContent = icon;
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  const strong = document.createElement('strong');
+  strong.textContent = name;
+  meta.appendChild(strong);
+  if (sub) {
+    const small = document.createElement('span');
+    small.className = 'sub';
+    small.textContent = sub;
+    meta.appendChild(small);
+  }
+  chip.append(glyph, meta);
+  return chip;
+}
+
+/** A selection, as chips: every pack named, or the playlist it is instead. */
+function selectionChips(ids, count, playlist) {
+  if (ids.some(isImportId)) {
+    return [poolChip({
+      icon: SOURCE_ICON[playlist && playlist.source] || 'PL',
+      name: (playlist && playlist.name) || 'Imported playlist',
+      sub: count ? `${count.toLocaleString()} songs · evenly weighted` : 'imported playlist'
+    })];
+  }
+  return ids.map((id) => {
+    const pack = packById.get(id);
+    return poolChip({
+      icon: (pack && pack.icon) || '♪',
+      name: (pack && pack.name) || id,
+      sub: pack ? `${pack.count.toLocaleString()} songs` : ''
+    });
+  });
+}
+
+/**
+ * What the room is playing, for everybody, in full.
+ *
+ * This exists because the settings line cannot do it: a selection of six packs
+ * is named "All Time + 5 more", and the five it does not name are exactly what
+ * somebody about to play wants to know. Every pack gets a chip, and in a mix
+ * every player gets a row of their own.
+ *
+ * The host sees it too when mixing -- the grid above only shows their own
+ * picks, so this is their only view of what everybody else brought.
+ */
+function renderPool(state) {
+  const inLobby = state.state === 'lobby' || state.state === 'ended';
+  const show = inLobby && !state.daily && (state.mix || state.hostPid !== me);
+  el.pool.classList.toggle('hidden', !show);
+  el.poolBody.innerHTML = '';
+  if (!show) return;
+
+  if (state.mix) {
+    const picks = state.picks || [];
+    const picked = picks.filter((p) => p.ids.length);
+    el.poolLabel.textContent = 'Everyone’s songs';
+    el.poolSum.textContent = `${picked.length} selection${picked.length === 1 ? '' : 's'} · `
+      + `${(state.packCount || 0).toLocaleString()} songs · equal turns`;
+    el.poolBody.classList.add('by-player');
+
+    for (const pick of picks) {
+      const row = document.createElement('div');
+      row.className = 'pool-row';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = pick.pid === me ? `${pick.name} (you)` : pick.name;
+      tint(who, pick.pid);
+      row.appendChild(who);
+
+      const chips = document.createElement('span');
+      chips.className = 'chips';
+      if (!pick.ids.length) {
+        chips.appendChild(poolChip({ icon: '—', name: 'nothing picked yet', live: false }));
+      } else {
+        // A mix pools several selections, so the room's own playlist readout
+        // cannot name each one -- the server's label does it instead.
+        for (const chip of pick.ids.some(isImportId)
+          ? [poolChip({ icon: 'PL', name: pick.label, sub: `${pick.count.toLocaleString()} songs` })]
+          : selectionChips(pick.ids, pick.count, null)) {
+          chips.appendChild(chip);
+        }
+      }
+      row.appendChild(chips);
+      el.poolBody.appendChild(row);
+    }
+    return;
+  }
+
+  el.poolBody.classList.remove('by-player');
+  const ids = state.packIds || [];
+  el.poolLabel.textContent = state.playlist ? 'Playlist' : (ids.length > 1 ? 'Song packs' : 'Song pack');
+  el.poolSum.textContent = state.playlist
+    ? 'every song equally likely'
+    : `${(state.packCount || 0).toLocaleString()} songs`;
+  for (const chip of selectionChips(ids, state.packCount, state.playlist)) {
+    el.poolBody.appendChild(chip);
+  }
+}
+
+for (const tab of el.sourceTabs) {
+  tab.addEventListener('click', () => {
+    sourceView = tab.dataset.source;
+    paintSourceTabs();
+    if (sourceView === 'playlist' && el.importUrl) el.importUrl.focus();
+  });
+}
+
+el.mixToggle.addEventListener('click', () => {
+  socket.emit('room:mix', { mix: el.mixToggle.getAttribute('aria-checked') !== 'true' });
+});
 
 fetch('/api/packs')
   .then((r) => r.json())
   .then((packs) => {
     renderPackSwitch(packs);
-    if (room) updatePackSwitch(room, canConfigure(room));
+    if (room) {
+      updateSongs(room);
+      renderPool(room);
+    }
   })
   .catch(() => {}); // switching is a convenience; the room still works without it
 
@@ -457,17 +679,15 @@ function setImportNote(text, tone) {
   el.importNote.className = `import-note${tone ? ` ${tone}` : ''}`;
 }
 
-/** Dim whichever half is not in force, so the live one is obvious at a glance. */
-function paintImportState(state) {
-  el.packList.classList.toggle('standby', !!state.playlist);
-  if (el.importSum) {
-    el.importSum.textContent = state.playlist ? 'in play' : '';
-  }
-  // A success note describes a playlist that is in play. Once the room has moved
-  // to a pack it describes nothing, and left up it reads as though the playlist
-  // were still live. Failures stay: they are the reason nothing changed, and the
-  // host has not read them yet.
-  if (!state.playlist && el.importNote && el.importNote.classList.contains('ok')) {
+/**
+ * A success note describes a playlist that is in play. Once we have moved back
+ * to a pack it describes nothing, and left up it reads as though the playlist
+ * were still live. Failures stay: they are the reason nothing changed, and
+ * whoever caused one has not read it yet.
+ */
+function paintImportState() {
+  const imported = mySelection().some(isImportId);
+  if (!imported && el.importNote && el.importNote.classList.contains('ok')) {
     setImportNote('');
   }
 }
@@ -608,36 +828,179 @@ fetch('/api/difficulty')
   })
   .catch(() => {}); // the server's own label carries it
 
-/* ------------------------------------------------------------- answer mode */
+/* ------------------------------------------------------------ game length */
 
 /*
- * Typing the title or picking it out of four. Host's, lobby-only, and shown to
- * everyone else on the settings line -- the same deal as the pack and the
- * difficulty. No optimistic highlight: the server's state sync paints it, so a
- * click that crosses with a sync cannot leave the two disagreeing.
+ * How many rounds a game runs.
+ *
+ * Stops rather than a slider or a number box: the difference between 12 and 13
+ * rounds is not a decision anybody wants to make, and a handful of round
+ * numbers is quicker to hit and impossible to fat-finger. The stops are filtered
+ * against the server's own bounds, so raising the ceiling there widens this
+ * without the page being touched.
+ *
+ * The two lines around it are the point of the control as much as the stops
+ * are. Above, what a game will cost in minutes -- the thing people are actually
+ * choosing between. Below, whether the songs picked upstairs can even fill it.
  */
-const MODE_LABEL = { classic: 'Type it', choice: 'Multiple choice' };
-const MODE_BLURB = {
-  classic: 'First to type the title wins the round',
-  choice: 'One guess each — the wrong card costs you the round'
-};
+const ROUND_STOPS = [3, 5, 10, 15, 20, 30, 40, 50];
 
-function currentMode() {
-  return (room && room.mode) || 'classic';
+/** The value we have asked for but not yet had confirmed, so a state sync
+ *  arriving in between cannot flick the highlight back under the cursor. */
+let roundsPending = null;
+
+function roundConfig(state) {
+  return (state && state.roundConfig) || { value: state.totalRounds, min: 3, max: 20, paceMs: 40000 };
+}
+
+/** Whole minutes, rounded, floored at one -- "about 0 min" says nothing. */
+function describeLength(rounds, paceMs) {
+  return `about ${Math.max(1, Math.round((rounds * paceMs) / 60000))} min`;
+}
+
+/**
+ * The one thing a round count can promise and then fail to deliver.
+ *
+ * A game needs as many playable songs as it has rounds, and two different
+ * shortfalls are worth different sentences: a pool that is plainly too small
+ * can be seen coming, while a game that ran short because iTunes could not find
+ * previews in time can only be reported afterwards -- and is otherwise
+ * invisible, since the round count is reset the moment the lobby comes back.
+ */
+function roundsWarning(state, cfg) {
+  const pool = state.packCount || 0;
+  if (pool && cfg.value > pool) {
+    return `Only ${pool.toLocaleString()} songs to draw from — a game can run `
+      + `${pool} round${pool === 1 ? '' : 's'} at most.`;
+  }
+  const short = cfg.shortfall;
+  if (short) {
+    return `Last game managed ${short.got} of ${short.asked} rounds — previews for the `
+      + 'rest could not be found in time. Try again, or pick a broader pool.';
+  }
+  return '';
+}
+
+function renderRoundStops(cfg) {
+  el.roundStops.innerHTML = '';
+  for (const stop of ROUND_STOPS.filter((n) => n >= cfg.min && n <= cfg.max)) {
+    const btn = document.createElement('button');
+    btn.className = 'round-stop';
+    btn.dataset.rounds = stop;
+    btn.setAttribute('aria-pressed', String(stop === cfg.value));
+    btn.textContent = stop;
+    btn.addEventListener('click', () => {
+      roundsPending = stop;
+      socket.emit('room:rounds', { rounds: stop });
+    });
+    el.roundStops.appendChild(btn);
+  }
+}
+
+function updateRounds(state, isHost) {
+  const canSet = isHost && (state.state === 'lobby' || state.state === 'ended');
+  el.roundsBlock.classList.toggle('hidden', !canSet);
+  if (!canSet) {
+    roundsPending = null;
+    return;
+  }
+
+  const cfg = roundConfig(state);
+  // Waiting on our own change to land: leave the highlight where the click put
+  // it rather than letting an unrelated sync bounce it back for a frame.
+  if (roundsPending !== null) {
+    if (cfg.value !== roundsPending) return;
+    roundsPending = null;
+  }
+
+  // Rebuilt only when the set of stops itself changes -- otherwise the pressed
+  // state is repainted in place, so a click never re-creates the button it hit.
+  const wanted = ROUND_STOPS.filter((n) => n >= cfg.min && n <= cfg.max).length;
+  if (el.roundStops.childElementCount !== wanted) {
+    renderRoundStops(cfg);
+  } else {
+    for (const btn of el.roundStops.children) {
+      btn.setAttribute('aria-pressed', String(Number(btn.dataset.rounds) === cfg.value));
+    }
+  }
+
+  el.roundsTime.textContent = describeLength(cfg.value, cfg.paceMs);
+  const warning = roundsWarning(state, cfg);
+  el.roundsWarn.textContent = warning;
+  el.roundsWarn.classList.toggle('on', !!warning);
+}
+
+/* -------------------------------------------------------------- game mode */
+
+/*
+ * How the room answers: typing the title, picking it out of four, and whatever
+ * else the server's catalogue has grown since. It is the first thing in the
+ * lobby because it decides what the game *is* -- the songs are picked for a
+ * mode, not the other way round.
+ *
+ * The cards are built from /api/modes rather than written into the page, so a
+ * mode added on the server (see game.js MODE_CATALOG) turns up here on its own.
+ * The list below is only a floor to stand on if that request fails.
+ *
+ * Host's, lobby-only, and shown to everyone else on the settings line -- the
+ * same deal as the packs and the difficulty. No optimistic highlight: the
+ * server's state sync paints it, so a click that crosses with a sync cannot
+ * leave the two disagreeing.
+ */
+let modeCatalog = [
+  { id: 'classic', label: 'Type it', blurb: 'Name the song in the chat', hint: '' },
+  { id: 'choice', label: 'Multiple choice', blurb: 'Pick the song out of four', hint: '' }
+];
+
+function modeInfo(id) {
+  return modeCatalog.find((m) => m.id === id) || null;
+}
+
+/** The short name a settings line uses. Unknown ids print as themselves rather
+ *  than as nothing, so an older client never claims the wrong mode. */
+function modeLabel(id) {
+  const info = modeInfo(id);
+  return info ? info.label : (id || 'Type it');
+}
+
+function renderModeSwitch() {
+  el.modeToggle.innerHTML = '';
+  for (const mode of modeCatalog) {
+    const btn = document.createElement('button');
+    btn.className = 'mode-opt';
+    btn.dataset.mode = mode.id;
+    btn.setAttribute('aria-pressed', String(!!room && room.mode === mode.id));
+    const label = document.createElement('b');
+    label.textContent = mode.label;
+    const blurb = document.createElement('span');
+    blurb.textContent = mode.blurb || '';
+    btn.append(label, blurb);
+    btn.addEventListener('click', () => socket.emit('room:mode', { mode: mode.id }));
+    el.modeToggle.appendChild(btn);
+  }
 }
 
 function updateModeSwitch(state, isHost) {
   const canSet = isHost && (state.state === 'lobby' || state.state === 'ended');
   el.modeSwitch.classList.toggle('hidden', !canSet);
-  el.modeBlurb.textContent = MODE_BLURB[state.mode] || '';
-  for (const btn of el.modeSwitch.querySelectorAll('.mode-opt')) {
+  const info = modeInfo(state.mode);
+  el.modeBlurb.textContent = (info && info.hint) || '';
+  for (const btn of el.modeToggle.querySelectorAll('.mode-opt')) {
     btn.setAttribute('aria-pressed', String(btn.dataset.mode === state.mode));
   }
 }
 
-for (const btn of el.modeSwitch.querySelectorAll('.mode-opt')) {
-  btn.addEventListener('click', () => socket.emit('room:mode', { mode: btn.dataset.mode }));
-}
+renderModeSwitch();
+
+fetch('/api/modes')
+  .then((r) => r.json())
+  .then((cfg) => {
+    if (!cfg || !Array.isArray(cfg.modes) || !cfg.modes.length) return;
+    modeCatalog = cfg.modes;
+    renderModeSwitch();
+    if (room) updateModeSwitch(room, canConfigure(room));
+  })
+  .catch(() => {}); // the two built-in cards above still work
 
 /* -------------------------------------------------------------- room state */
 
@@ -677,11 +1040,18 @@ function applyState(state) {
     // The code is a private handle on one person's run, not something to share.
     el.topCode.textContent = 'Daily';
   }
-  // Each of these hides its own control when handed false, so the daily gets
-  // an empty lobby for free rather than needing a second way to blank it.
-  updatePackSwitch(state, canConfigure(state));
+  // Each of these hides its own section when it does not apply, so the daily
+  // gets an empty lobby for free rather than needing a second way to blank it --
+  // and a non-host in a mix gets the songs block and nothing else.
+  updateSongs(state);
   updateDifficulty(state, canConfigure(state));
   updateModeSwitch(state, canConfigure(state));
+  updateRounds(state, canConfigure(state));
+  renderPool(state);
+  // The scroller itself is empty when every section inside it has bowed out.
+  el.lobbyConfig.classList.toggle('hidden', !el.lobbyConfig.querySelector(
+    '.config-block:not(.hidden)'
+  ));
 
   el.codeBadge.classList.toggle('hidden', !!state.solo);
   el.lobbyTitle.textContent = isDaily
@@ -692,17 +1062,22 @@ function applyState(state) {
 
   el.settings.innerHTML = '';
   const bits = [
+    // Mode leads, as it does in the lobby's controls: it is the setting that
+    // decides what game the others are settings for.
+    ['Mode', modeLabel(state.mode)],
     // A playlist is labelled as one: "Pack: Road Trip 2019" would misdescribe
     // where the songs came from, and the distinction matters to a player working
-    // out why they have never heard any of them.
-    state.playlist
-      ? ['Playlist', state.packName]
-      : [(state.packIds || []).length > 1 ? 'Packs' : 'Pack', state.packName],
+    // out why they have never heard any of them. A mix is neither, and the
+    // readout above names every part of it.
+    state.mix
+      ? ['Mix', state.packName]
+      : (state.playlist
+        ? ['Playlist', state.packName]
+        : [(state.packIds || []).length > 1 ? 'Packs' : 'Pack', state.packName]),
     ['Rounds', state.totalRounds],
     // Difficulty genuinely does not apply to an imported playlist, so it says so
     // rather than reporting the inert stored value as though it were in force.
     ['Difficulty', state.equalWeight ? 'even' : (state.difficultyLabel || '—')],
-    ['Answering', MODE_LABEL[state.mode] || MODE_LABEL.classic],
     ...(state.solo ? [] : [['Max players', state.maxPlayers], ['Password', state.hasPassword ? 'on' : 'off']])
   ];
   for (const [k, v] of bits) {
@@ -1640,7 +2015,7 @@ socket.on('game:over', (summary) => {
     `${rounds} round${rounds === 1 ? '' : 's'}`,
     summary.packName,
     summary.difficultyLabel,
-    MODE_LABEL[summary.mode] || null
+    summary.mode ? modeLabel(summary.mode) : null
   ]);
 
   // The two things a scoreboard cannot show: how many nobody got, and the single

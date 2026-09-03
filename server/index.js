@@ -10,7 +10,7 @@ const { Server } = require('socket.io');
 
 const { packSummaries, selectPacks, defaultSelection, registerImport } = require('./packs');
 const { urlForToken, fetchClip, resolveMany, searchHealth } = require('./itunes');
-const { createRoom, getRoom, rooms } = require('./game');
+const { createRoom, getRoom, rooms, MODE_CATALOG, DEFAULT_MODE } = require('./game');
 const { LEVELS, DEFAULT_DIFFICULTY } = require('./difficulty');
 const playlists = require('./playlists');
 const auth = require('./auth');
@@ -32,6 +32,16 @@ app.use(auth.attachUser);
 auth.mount(app);
 
 app.get('/api/packs', (_req, res) => res.json(packSummaries()));
+
+/**
+ * The answering modes, with the words that describe them.
+ *
+ * Served rather than hardcoded in the client for the same reason the difficulty
+ * bands are: the lobby builds a card per entry, so a mode added to the
+ * catalogue in game.js turns up in the lobby without the page being touched --
+ * and no id the client can offer is one the server would refuse.
+ */
+app.get('/api/modes', (_req, res) => res.json({ default: DEFAULT_MODE, modes: MODE_CATALOG }));
 
 /* ------------------------------------------------------- playlist import */
 
@@ -470,6 +480,16 @@ io.on('connection', (socket) => {
   socket.on('room:pack', (opts) => {
     const room = getRoom(socket.data.code);
     if (room) room.setPacks(socket.data.pid, packIdsFrom(opts));
+  });
+
+  socket.on('room:rounds', (opts) => {
+    const room = getRoom(socket.data.code);
+    if (room) room.setRounds(socket.data.pid, opts && opts.rounds);
+  });
+
+  socket.on('room:mix', (opts) => {
+    const room = getRoom(socket.data.code);
+    if (room) room.setMix(socket.data.pid, opts && opts.mix);
   });
 
   socket.on('room:mode', (opts) => {

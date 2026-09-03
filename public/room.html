@@ -46,18 +46,20 @@
         </div>
         <div class="roster" id="roster"></div>
 
-        <!-- What the room is playing, for everyone -- the controls below are the
-             host's, this is the readout. Shown only for an imported playlist;
-             a pack selection is already spelled out in the settings line. -->
-        <div class="playlist-badge hidden" id="playlist-badge">
-          <span class="icon" id="playlist-source">PL</span>
-          <span class="meta">
-            <strong id="playlist-name"></strong>
-            <span class="count" id="playlist-count"></span>
-          </span>
+        <!-- What the room is playing, in full, for everyone.
+             The settings line below can only afford a name ("All Time + 5
+             more"), which is exactly the thing a player wants spelled out --
+             so every pack, playlist and, in a mix, every player's own
+             contribution gets listed here instead. -->
+        <div class="pool hidden" id="pool">
+          <div class="pool-head">
+            <span class="label" id="pool-label">Songs</span>
+            <span class="pool-sum" id="pool-sum"></span>
+          </div>
+          <div class="pool-body" id="pool-body"></div>
         </div>
 
-        <!-- All of the host's configuration in one scroller.
+        <!-- All of the room's configuration in one scroller.
              The lobby used to let the pack grid absorb every bit of height the
              window was short by, which worked while the grid was the only thing
              in that box. It no longer is, so the whole block scrolls as a unit
@@ -66,19 +68,75 @@
              button to start it, must never be somewhere you have to scroll to
              find. -->
         <div class="lobby-config hidden" id="lobby-config">
-          <div class="pack-switch">
-            <div class="pack-head">
-              <span class="label">Song packs</span>
+          <!-- Mode comes first, and that is the whole point of the ordering: it
+               decides what the game *is*, and every other setting here is
+               chosen for a mode rather than the other way round. Cards are
+               built from /api/modes, so a mode added on the server appears in
+               here without this page being touched. -->
+          <section class="config-block hidden" id="mode-switch">
+            <div class="block-head">
+              <span class="label">Game mode</span>
+              <span class="block-note" id="mode-blurb"></span>
+            </div>
+            <div class="mode-toggle" id="mode-toggle" role="group" aria-label="Game mode"></div>
+          </section>
+
+          <!-- Where the songs come from. Packs and an imported playlist are
+               alternatives (see server/packs.js#selectPacks), so they are tabs
+               rather than two stacked panels -- side by side they cost the
+               lobby a screenful of height to show a choice only one half of
+               which is ever in force. -->
+          <section class="config-block hidden" id="songs-block">
+            <div class="block-head">
+              <span class="label" id="songs-label">Songs</span>
               <span class="pack-sum" data-pack-sum="room"></span>
             </div>
-            <div class="packs" data-packs="room"></div>
-          </div>
 
-          <!-- Difficulty sits with the packs, above the divider, because that is
-               what it applies to -- an imported playlist is evenly weighted and
-               hides this control entirely. -->
-          <div class="difficulty hidden" id="difficulty">
-            <div class="diff-head">
+            <div class="source-bar">
+              <div class="source-tabs" role="tablist" aria-label="Where the songs come from">
+                <button class="source-tab" role="tab" data-source="packs" aria-selected="true">
+                  Song packs
+                </button>
+                <button class="source-tab" role="tab" data-source="playlist" aria-selected="false">
+                  Playlist link
+                </button>
+              </div>
+              <!-- A toggle rather than a third tab: mixing is orthogonal to
+                   where any one player's songs come from, and in a mix one
+                   player can bring packs and the next a playlist. -->
+              <button class="mix-switch hidden" id="mix-toggle" role="switch" aria-checked="false">
+                <span class="track" aria-hidden="true"><span class="knob"></span></span>
+                <span class="mix-name">Mix</span>
+              </button>
+            </div>
+            <p class="source-note" id="source-note"></p>
+
+            <div class="source-panel" id="panel-packs">
+              <div class="packs" data-packs="room"></div>
+            </div>
+
+            <div class="source-panel hidden" id="panel-playlist">
+              <div class="import-row">
+                <label class="field">
+                  <span>Deezer or Spotify link</span>
+                  <input
+                    type="url"
+                    data-import-url="room"
+                    placeholder="https://www.deezer.com/playlist/..."
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                </label>
+                <button class="btn" data-import-go="room">Import</button>
+              </div>
+              <p class="import-note" data-import-note="room" role="status"></p>
+            </div>
+          </section>
+
+          <!-- Difficulty is a property of the songs, so it sits under them. An
+               imported playlist is evenly weighted and hides this entirely. -->
+          <section class="config-block difficulty hidden" id="difficulty">
+            <div class="block-head">
               <span class="label">Difficulty</span>
               <span class="diff-read">
                 <b class="diff-name" id="diff-name"></b>
@@ -99,47 +157,20 @@
               <span>the hits</span>
               <span>deep cuts</span>
             </div>
-          </div>
+          </section>
 
-          <!-- Both halves, always. Packs and a playlist are alternatives --
-               picking either clears the other -- but neither is a one-way door,
-               so there is no reason to hide one. -->
-          <div class="or-split">or</div>
-          <div class="playlist-import">
-            <div class="pack-head">
-              <span class="label">Import a playlist</span>
-              <span class="pack-sum" data-import-sum="room"></span>
+          <!-- How long a game runs. Last, because it is the one setting that
+               depends on the others: whether a pool can fill twenty rounds is a
+               question about the songs picked above, and the warning under the
+               stops is where that gets answered. -->
+          <section class="config-block hidden" id="rounds-block">
+            <div class="block-head">
+              <span class="label">Game length</span>
+              <span class="block-note" id="rounds-time"></span>
             </div>
-            <div class="import-row">
-              <label class="field">
-                <span>Playlist link</span>
-                <input
-                  type="url"
-                  data-import-url="room"
-                  placeholder="https://www.deezer.com/playlist/..."
-                  autocomplete="off"
-                  spellcheck="false"
-                />
-              </label>
-              <button class="btn" data-import-go="room">Import</button>
-            </div>
-            <p class="import-note" data-import-note="room" role="status"></p>
-          </div>
-
-          <div class="mode-switch hidden" id="mode-switch">
-            <div class="mode-head">
-              <span class="label">Answering</span>
-              <span class="mode-blurb" id="mode-blurb"></span>
-            </div>
-            <div class="mode-toggle" role="group" aria-label="Answer mode">
-              <button class="mode-opt" data-mode="classic" aria-pressed="true">
-                <b>Type it</b><span>Name the song in the chat</span>
-              </button>
-              <button class="mode-opt" data-mode="choice" aria-pressed="false">
-                <b>Multiple choice</b><span>Pick from four songs in the pack</span>
-              </button>
-            </div>
-          </div>
+            <div class="round-stops" id="round-stops" role="group" aria-label="Rounds per game"></div>
+            <p class="round-warn" id="rounds-warn" role="status"></p>
+          </section>
         </div>
 
         <div class="settings-line" id="settings-line"></div>

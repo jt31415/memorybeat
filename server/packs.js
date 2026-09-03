@@ -147,6 +147,7 @@ function load() {
 function reload() {
   cache = null;
   selections = new Map(); // built out of the old track arrays
+  mixes = new Map();      // ...and so are the mixes made of them
   return load().list.length;
 }
 
@@ -388,6 +389,70 @@ function selectPacks(ids) {
   return selection;
 }
 
+/* ------------------------------------------------------------------- mixes */
+
+/**
+ * Several players' selections played together, each getting equal turns.
+ *
+ * A mix is shaped like every other selection -- `{ ids, key, name, tracks }` --
+ * so a room can hold one without anything downstream knowing. What makes it a
+ * mix is `parts`: the contributing selections, kept intact. game.js draws a song
+ * at a time from each of them (see Room#mixOrder) rather than shuffling the
+ * merged list, because the merged list is dominated by whoever picked the
+ * biggest packs. `tracks` is still the union, and is what the song count, the
+ * decoy window and the history limit are measured against.
+ *
+ * Memoised on the combined key for the same reasons single selections are: the
+ * ease scale is cached against the track array's identity, and a room's history
+ * is held against the selection it was played from.
+ */
+let mixes = new Map();
+
+/** Plenty: a mix per distinct combination of selections a room passes through. */
+const MIX_MAX = 200;
+
+/**
+ * @param {Array<{ids: string[]}>} parts one entry per contributing player
+ * @returns {object|null} a selection, or null if nobody contributed anything
+ *          playable. One distinct contribution is not a mix -- it comes back as
+ *          the plain selection it is, so a room with a single picker behaves
+ *          exactly as it would with mix switched off.
+ */
+function mixSelection(parts) {
+  // Keyed by selection rather than by player: two people picking the same packs
+  // are one pool, and giving it two turns in the round-robin would hand them
+  // double the share of a game for having agreed with each other.
+  const byKey = new Map();
+  for (const part of parts || []) {
+    const selection = selectPacks(part && part.ids);
+    if (selection && !byKey.has(selection.key)) byKey.set(selection.key, selection);
+  }
+
+  const list = [...byKey.values()];
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+
+  const key = `mix:${list.map((s) => s.key).sort().join('|')}`;
+  const cached = mixes.get(key);
+  if (cached) return cached;
+
+  const selection = {
+    ids: [...new Set(list.flatMap((s) => s.ids))],
+    key,
+    name: `Mix of ${list.length} selections`,
+    tracks: mergeTracks(list),
+    // Difficulty is applied inside each part, so it only stops meaning anything
+    // when there is no part it could apply to.
+    equalWeight: list.every((s) => s.equalWeight),
+    mix: true,
+    parts: list
+  };
+
+  mixes.set(key, selection);
+  while (mixes.size > MIX_MAX) mixes.delete(mixes.keys().next().value);
+  return selection;
+}
+
 /**
  * Something to play, for a room that has not chosen yet.
  *
@@ -417,6 +482,7 @@ module.exports = {
   allPacks,
   getPack,
   selectPacks,
+  mixSelection,
   packSummaries,
   reload,
   searchTerm,

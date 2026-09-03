@@ -397,15 +397,24 @@ input::placeholder { color: rgba(226, 233, 246, 0.24); }
    The cap is an upper bound only: as the panel's one shrinkable part, the list
    takes whatever is left after the rest of the panel, so the window height is
    what actually decides its size. */
-/* The packs label and its running total share a line: several packs can be on
-   at once, so how many is the one thing the heading has to answer. */
-.pack-head {
+/* Every configuration section is headed the same way: what it is on the left,
+   what it currently amounts to on the right. For the packs that running total
+   is the one thing the heading has to answer, since several can be on at once;
+   for difficulty it is the band name, for the mode its one-line consequence. */
+.block-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 12px;
 }
-.pack-head .label { margin-bottom: 8px; }
+.block-head .label { margin-bottom: 0; }
+.block-note {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--faint);
+  text-align: right;
+}
 .pack-sum {
   font-family: var(--mono);
   font-size: 10.5px;
@@ -487,13 +496,108 @@ input::placeholder { color: rgba(226, 233, 246, 0.24); }
 }
 .pack[aria-pressed="true"] .meta .count { color: var(--amber); }
 
-/* The lobby's switcher reuses these buttons. It is a plain block now -- the
-   scrolling lives one level up, on .lobby-config, so the grid can be its own
-   natural height instead of a window onto itself. */
-.pack-switch,
-.playlist-import {
+/* ------------------------------------------------------------ config blocks */
+
+/* One section of the lobby's console -- mode, songs, difficulty. The scrolling
+   lives one level up, on .lobby-config, so each block is its own natural height
+   instead of a window onto itself. */
+.config-block {
   width: 100%;
   text-align: left;
+}
+
+/* Packs or a playlist, never both on screen: the server refuses a merge of the
+   two (see packs.selectPacks), so showing both panels spent a screenful of
+   height on a choice only one half of which is ever in force. */
+.source-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.source-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(226, 233, 246, 0.02);
+}
+.source-tab {
+  padding: 7px 15px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 0.18s var(--ease), background 0.18s var(--ease),
+              border-color 0.18s var(--ease);
+}
+.source-tab:hover { color: var(--text); }
+.source-tab[aria-selected="true"] {
+  border-color: rgba(247, 185, 62, 0.5);
+  background: rgba(247, 185, 62, 0.1);
+  color: var(--amber);
+}
+
+/* A switch, not a tab: mixing is orthogonal to where any one player's songs
+   come from, and in a mix one player can bring packs and the next a playlist. */
+.mix-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-left: auto;
+  padding: 6px 12px 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  transition: border-color 0.18s var(--ease), color 0.18s var(--ease);
+}
+.mix-switch:hover { border-color: var(--line-strong); color: var(--text); }
+.mix-switch .track {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  flex: none;
+  border-radius: 999px;
+  background: rgba(226, 233, 246, 0.12);
+  transition: background 0.18s var(--ease);
+}
+.mix-switch .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.18s var(--ease), background 0.18s var(--ease);
+}
+.mix-switch .mix-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.mix-switch[aria-checked="true"] {
+  border-color: rgba(247, 185, 62, 0.5);
+  color: var(--amber);
+}
+.mix-switch[aria-checked="true"] .track { background: rgba(247, 185, 62, 0.45); }
+.mix-switch[aria-checked="true"] .knob {
+  background: var(--amber);
+  transform: translateX(13px);
+}
+
+/* Fixed height whether or not there is anything to say, so switching tabs or
+   turning mix on cannot shunt the pack grid up and down the page. */
+.source-note {
+  margin: 0 0 12px;
+  min-height: 18px;
+  font-size: 12.5px;
+  color: var(--faint);
 }
 
 /* Every host control in one scroller.
@@ -534,10 +638,7 @@ input::placeholder { color: rgba(226, 233, 246, 0.24); }
   overflow: visible;
   padding-right: 0;
 }
-/* The flex gap spaces the sections; the divider's own margins would double it. */
-.lobby-config .or-split { margin: 0; }
-.lobby-config .difficulty,
-.lobby-config .mode-switch { max-width: none; }
+.lobby-config .difficulty { max-width: none; }
 
 /* A 720px-tall window cannot fit the lobby's furniture at full spacing -- title,
    roster, playlist badge, settings line and the start block come to ~270px
@@ -726,13 +827,6 @@ input::placeholder { color: rgba(226, 233, 246, 0.24); }
   max-width: 660px;
   text-align: left;
 }
-.difficulty .diff-head {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.difficulty .label { margin-bottom: 0; }
 .difficulty .diff-read {
   margin-left: auto;
   min-width: 0;
@@ -769,30 +863,56 @@ input::placeholder { color: rgba(226, 233, 246, 0.24); }
   color: var(--faint);
 }
 
-/* ------------------------------------------------------------- answer mode */
+/* ------------------------------------------------------------- game length */
 
-/* Two ways to answer, side by side in the same 660px column as the pack and
-   difficulty controls above it -- one more row of the host's console. */
-.mode-switch {
-  width: 100%;
-  max-width: 660px;
-  text-align: left;
-}
-.mode-switch .mode-head {
+/* Round numbers, not a slider: nobody is choosing between twelve rounds and
+   thirteen, and a row of stops is quicker to hit than a handle to drag. They
+   wrap rather than squeeze, so a wider range of stops stays legible. */
+.round-stops {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
-.mode-switch .label { margin-bottom: 0; }
-.mode-switch .mode-blurb {
-  margin-left: auto;
-  font-size: 13px;
+.round-stop {
+  min-width: 54px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(226, 233, 246, 0.02);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease),
+              color 0.18s var(--ease);
+}
+.round-stop:hover { border-color: var(--line-strong); color: var(--text); }
+.round-stop[aria-pressed="true"] {
+  border-color: rgba(247, 185, 62, 0.55);
+  background: rgba(247, 185, 62, 0.08);
+  color: var(--amber);
+}
+
+/* Holds its row whether or not there is anything to warn about, so a pack
+   change that brings the warning on cannot shove the stops up the page. */
+.round-warn {
+  margin: 10px 0 0;
+  min-height: 18px;
+  font-size: 12.5px;
   color: var(--faint);
 }
+.round-warn.on { color: var(--bad); }
+
+/* --------------------------------------------------------------- game mode */
+
+/* The first thing in the lobby, and the one setting the others are settings
+   *for*. Auto-fitting rather than two fixed columns: the cards are built from
+   the server's catalogue, so a third and fourth mode have to be able to arrive
+   without this rule needing to know about them. */
 .mode-toggle {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 10px;
 }
 .mode-opt {
@@ -1780,6 +1900,16 @@ input[type="range"]::-moz-range-thumb {
   .mask .word { gap: 4px; }
   .answer-slot { padding: 12px 8px 10px; }
   .mode-toggle { grid-template-columns: 1fr; }
+  /* The tabs and the mix switch cannot share a phone's width without the tab
+     labels wrapping inside their own pills, so the switch drops below. */
+  .source-bar { flex-wrap: wrap; gap: 10px; }
+  .source-tabs { flex: 1; }
+  .source-tab { flex: 1; text-align: center; padding: 7px 10px; }
+  .mix-switch { margin-left: 0; }
+  /* Names above their chips rather than beside them: at this width a 30% column
+     for the name leaves the chips too narrow to read. */
+  .pool-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .pool-row .who { max-width: 100%; }
   .choices { grid-template-columns: 1fr; gap: 8px; }
   .choice { padding: 10px 14px; }
 
@@ -1919,15 +2049,14 @@ input[type="range"]::-moz-range-thumb {
 
 /* ------------------------------------------------------- playlist import */
 
-/* Packs and an imported playlist are alternatives, not ingredients (see
-   server/packs.js#selectPacks), so the divider between them says "or" rather
-   than sitting there as decoration. */
+/* The front page's divider between joining a room and making one: two things
+   you might have come to do, not two halves of one form. (The lobby used to
+   have one of these between packs and a playlist -- those are tabs now, since
+   only one of them is ever in force.) */
 .or-split {
   display: flex;
   align-items: center;
   gap: 14px;
-  /* Generous above: the pack grid scrolls and clips its last row mid-card, so a
-     tight gap here reads as the divider overlapping a cut-off pack. */
   margin: 18px 0 20px;
   color: var(--faint);
   font-family: var(--mono);
@@ -2000,52 +2129,126 @@ input[type="range"]::-moz-range-thumb {
 .import-note.bad { color: var(--bad); }
 .import-note.busy { color: var(--amber); }
 
-/* An active playlist dims the pack grid rather than hiding or disabling it: the
-   packs are still one click from coming back, and a control that vanishes is
-   harder to find again than one that has gone quiet. */
-.packs.standby { opacity: 0.38; }
-.packs.standby .pack { border-color: var(--line); background: var(--panel-2); }
+/* --------------------------------------------------------- the pool readout */
 
-/* The lobby's read-only view of an imported playlist, in place of the pack
-   grid the host would otherwise be switching between. */
-.playlist-badge {
+/* What the room is playing, in full, for everyone.
+   The settings line can only afford a name -- six packs are "All Time + 5 more"
+   -- and the five it leaves out are exactly what somebody about to play wants
+   to know. So every pack gets a chip, and in a mix every player gets a row.
+   Bounded and scrollable: twenty players' picks must not push "Start game" off
+   the bottom of the lobby. */
+.pool {
+  width: 100%;
+  max-width: 660px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(226, 233, 246, 0.02);
+}
+.pool-head {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
-  border: 1px solid rgba(247, 185, 62, 0.55);
-  border-radius: 12px;
-  background: rgba(247, 185, 62, 0.08);
-  margin-bottom: 22px;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
 }
-.playlist-badge .icon {
-  flex: none;
-  width: 46px;
-  height: 46px;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
-  background: var(--amber);
-  color: #17110a;
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 11px;
-}
-.playlist-badge .meta { min-width: 0; }
-.playlist-badge strong {
-  display: block;
-  font-size: 15px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.playlist-badge .count {
+.pool-head .label { margin-bottom: 0; }
+.pool-sum {
+  margin-left: auto;
   font-family: var(--mono);
   font-size: 10.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
+  text-align: right;
 }
+.pool-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: min(30vh, 220px);
+  overflow-y: auto;
+}
+/* Per-player rows stack; a single selection's chips flow. */
+.pool-body.by-player { flex-direction: column; flex-wrap: nowrap; gap: 10px; }
+.pool-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.pool-row .who {
+  flex: none;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--hue, var(--text));
+}
+.pool-row .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 12px 6px 8px;
+  border: 1px solid rgba(247, 185, 62, 0.4);
+  border-radius: 999px;
+  background: rgba(247, 185, 62, 0.07);
+  min-width: 0;
+}
+.pool-chip .icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 7px;
+  background: var(--amber);
+  color: #17110a;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.pool-chip .meta {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+.pool-chip strong {
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pool-chip .sub {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Somebody who has not picked yet is listed, not omitted -- "waiting on them"
+   is worth showing -- so it is drawn as an absence rather than a selection. */
+.pool-chip.idle {
+  border-color: var(--line);
+  border-style: dashed;
+  background: none;
+}
+.pool-chip.idle .icon { background: rgba(226, 233, 246, 0.1); color: var(--faint); }
+.pool-chip.idle strong { color: var(--faint); font-weight: 500; }
 
 /* ------------------------------------------------------- daily challenge */
 

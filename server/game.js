@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const daily = require('./daily');
-const { selectPacks, trackKey, dedupeKey } = require('./packs');
+const { selectPacks, mixSelection, trackKey, dedupeKey } = require('./packs');
 const { resolveMany, mintToken, prefetch } = require('./itunes');
 const { judge, maskTitle, revealableIndexes, norm } = require('./guess');
 const {
@@ -20,6 +20,18 @@ const LOAD_WAIT_MS = 12000;  // longest we wait for slow clients to buffer
 const LOAD_DEADLINE_MS = 15000; // longest we spend resolving songs before a game
 const EMPTY_ROOM_MS = 120000;
 const DEFAULT_ROUNDS = 10;
+/**
+ * How long a game may be set to run.
+ *
+ * The ceiling is not a taste judgement, it is what the song supply can promise.
+ * A cold pack resolves through one throttled queue at roughly three lookups a
+ * second, and start() gives up after LOAD_DEADLINE_MS -- so twenty rounds is
+ * about the most that reliably *arrives* rather than quietly turning into a
+ * shorter game. Raising it means scaling that deadline and windowing the
+ * prefetch below; see startWith.
+ */
+const MIN_ROUNDS = 3;
+const MAX_ROUNDS = 20;
 // How many recently played songs a room avoids repeating. Independent shuffles
 // repeat far more than people expect -- drawing 10 from 120 gives two clean
 // games in a row only ~41% of the time -- so recent picks are held back.
@@ -28,9 +40,43 @@ const MAX_POINTS = 1000;
 // Fractions of the round at which hints land: the artist first, then letters.
 const HINT_AT = [0.4, 0.62, 0.82];
 
-// How a round is answered. 'classic' is the typed guess; 'choice' puts four
-// songs on screen -- the answer plus three decoys drawn from the same packs.
-const MODES = ['classic', 'choice'];
+/**
+ * How a round is answered -- the room's most consequential setting, and the one
+ * the lobby asks about first.
+ *
+ * A catalogue rather than a list of ids, and served to the client as one (see
+ * /api/modes), so the strings a player reads and the ids the server accepts
+ * cannot drift apart. Adding a mode is an entry here plus whatever the round
+ * itself needs; the lobby grows a card for it without being touched.
+ *
+ * Two more are planned and deliberately not here yet, since each needs round
+ * logic before it can be offered:
+ *
+ *   - `both`   — the title *and* the artist, scored separately, so a half-answer
+ *                is worth something. Needs a second judge pass in Room#chat and
+ *                a two-slot mask.
+ *   - `lyrics` — a line of the song instead of a clip. Needs a lyrics source,
+ *                which is the whole of the work.
+ *
+ * `label` is the short name a settings line uses, `blurb` the one-liner on the
+ * card, `hint` the sentence above the row explaining what the mode costs you.
+ */
+const MODE_CATALOG = [
+  {
+    id: 'classic',
+    label: 'Type it',
+    blurb: 'Name the song in the chat',
+    hint: 'First to type the title wins the round'
+  },
+  {
+    id: 'choice',
+    label: 'Multiple choice',
+    blurb: 'Pick the song out of four',
+    hint: 'One guess each — the wrong card costs you the round'
+  }
+];
+
+const MODES = MODE_CATALOG.map((m) => m.id);
 const DEFAULT_MODE = 'classic';
 const CHOICE_COUNT = 4;
 // Decoys are drawn from the answer's own neighbourhood in the pack, which is
@@ -61,6 +107,12 @@ function cleanMode(mode) {
   return MODES.includes(want) ? want : DEFAULT_MODE;
 }
 
+function clampRounds(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return DEFAULT_ROUNDS;
+  return Math.min(MAX_ROUNDS, Math.max(MIN_ROUNDS, n));
+}
+
 function cleanName(name) {
   const trimmed = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 16);
   return trimmed || 'Player';
@@ -74,13 +126,43 @@ class Room {
     // One or more packs, played as one merged list. `pack` is a selection (see
     // packs.js) -- pack-shaped, so everything below reads it the same either way.
     this.pack = selectPacks(opts.packIds);
+    // What the room draws from, as ids. In a mix this is the union of
+    // everybody's picks, so it is a readout rather than a setting -- see
+    // selectionIds for the thing the host actually chose.
     this.packIds = this.pack ? this.pack.ids : [];
+    /**
+     * The host's own selection: the pool when mix is off, and the fallback the
+     * room drops back to when a mix empties out.
+     *
+     * Kept apart from packIds because the two genuinely differ under a mix, and
+     * conflating them would mean switching mix off replaced the host's choice
+     * with whatever the pool had merged into.
+     */
+    this.selectionIds = this.packIds.slice();
+    /**
+     * Mix: everyone picks their own songs and all of them get played.
+     *
+     * A toggle rather than a third kind of source, because it is orthogonal to
+     * where any one player's songs come from -- in a mix one player can bring
+     * packs and the next an imported playlist. See recomputePack / mixOrder.
+     */
+    this.mix = false;
     this.password = opts.password || '';
     this.maxPlayers = this.solo ? 1 : Math.min(Math.max(Number(opts.maxPlayers) || 8, 2), 20);
     // configuredRounds is what the host asked for; totalRounds is what the
     // current game actually managed to load (never more, sometimes fewer).
-    this.configuredRounds = Math.min(Math.max(Number(opts.rounds) || DEFAULT_ROUNDS, 3), 20);
+    this.configuredRounds = clampRounds(opts.rounds);
     this.totalRounds = this.configuredRounds;
+    /**
+     * How many rounds the last game actually managed, when that was fewer than
+     * were asked for.
+     *
+     * Kept because the shortfall is otherwise invisible: totalRounds is reset
+     * the moment the lobby comes back, so a game that came up short leaves no
+     * trace and the host is left wondering why they got fourteen rounds out of
+     * twenty. The lobby says so instead. Null when nothing went wrong.
+     */
+    this.lastShortfall = null;
     // Which end of the pack songs are drawn from. 0 = the hits everyone knows,
     // 100 = the long tail. See difficulty.js -- it is a weighting, not a filter.
     this.difficulty = opts.difficulty == null
@@ -158,6 +240,10 @@ class Room {
       score: 0,
       connected: true,
       solved: false,
+      // This player's own song selection, as pack ids. Only read while the room
+      // is mixing -- except the host's, which is mirrored into selectionIds and
+      // is what the room plays the rest of the time.
+      pick: null,
       // Round index this player has to sit out, if any. See seatMidRound.
       spectating: null,
       joinedAt: Date.now()
@@ -218,6 +304,10 @@ class Room {
     if (![...this.players.values()].some((p) => p.connected)) {
       this.emptySince = Date.now();
     }
+    // Somebody who was bringing songs to a mix has walked off with them. Only in
+    // the lobby: mid-game the pool has already been drawn from, and re-settling
+    // it would wipe the history and the round count under a game in progress.
+    if (this.mix && (this.state === 'lobby' || this.state === 'ended')) this.recomputePack();
   }
 
   activePlayers() {
@@ -240,6 +330,22 @@ class Room {
       maxPlayers: this.maxPlayers,
       hasPassword: !!this.password,
       totalRounds: this.totalRounds,
+      /**
+       * The round-count control's whole world: what it is set to, what it may
+       * be set to, how long a round takes, and whether the last game managed
+       * what was asked of it.
+       *
+       * `paceMs` is here so the lobby can say what a game costs in minutes
+       * without keeping its own copy of the round timings, which would drift
+       * the first time one of them is tuned.
+       */
+      roundConfig: {
+        value: this.configuredRounds,
+        min: MIN_ROUNDS,
+        max: MAX_ROUNDS,
+        paceMs: COUNTDOWN_MS + ROUND_MS + REVEAL_MS,
+        shortfall: this.lastShortfall
+      },
       difficulty: this.difficulty,
       difficultyLabel: describeDifficulty(this.difficulty).name,
       // True when the room plays an imported playlist: every song equally
@@ -250,6 +356,18 @@ class Room {
         ? { source: this.pack.source, url: this.pack.url, name: this.pack.name }
         : null,
       mode: this.mode,
+      // Everyone picks their own songs. While it is on, the pack controls are
+      // everybody's rather than the host's, and `picks` below is what the room
+      // is actually made of.
+      mix: this.mix,
+      /**
+       * Who is bringing what, so the lobby can show the room's whole pool.
+       *
+       * Only in a mix -- otherwise packIds says it all. Each entry carries the
+       * ids as well as the label so a client can find its own contribution in
+       * here rather than keeping a second copy of it locally.
+       */
+      picks: this.mix ? this.pickSummaries() : null,
       // The client hides every lobby control for a daily room -- there is
       // nothing in there it is allowed to change.
       daily: this.daily ? { day: this.daily.day } : null,
@@ -442,34 +560,142 @@ class Room {
 
   /* -------------------------------------------------------------- settings */
 
-  /**
-   * Host changing which packs the room plays, from the lobby, between games.
-   *
-   * The client sends the whole selection rather than a pack to toggle, so a
-   * click that crosses with a state sync cannot leave the two disagreeing about
-   * what is on. An empty or all-unknown selection is refused outright -- a room
-   * with nothing to draw from has no start button worth pressing.
-   */
-  setPacks(pid, packIds) {
-    if (this.daily) return;
-    if (pid !== this.hostPid) return;
-    if (this.state !== 'lobby' && this.state !== 'ended') return;
-    const selection = selectPacks(packIds);
-    if (!selection || (this.pack && selection.key === this.pack.key)) return;
+  /** Everyone in the room who is currently bringing songs to a mix. The host
+   *  goes first, so a mix is named and listed from the same end every time. */
+  mixParts() {
+    return this.activePlayers()
+      .filter((p) => p.pick && p.pick.length)
+      .sort((a, b) => (a.pid === this.hostPid ? -1 : b.pid === this.hostPid ? 1 : 0))
+      .map((p) => ({ pid: p.pid, name: p.name, ids: p.pick }));
+  }
 
-    this.pack = selection;
-    this.packIds = selection.ids;
+  /** The mix as the lobby lists it: every connected player, whether or not they
+   *  have picked anything yet, since "waiting on them" is worth showing. */
+  pickSummaries() {
+    return this.activePlayers().map((p) => {
+      const selection = p.pick && p.pick.length ? selectPacks(p.pick) : null;
+      return {
+        pid: p.pid,
+        name: p.name,
+        isHost: p.pid === this.hostPid,
+        ids: selection ? selection.ids : [],
+        label: selection ? selection.name : null,
+        count: selection ? selection.tracks.length : 0
+      };
+    });
+  }
+
+  /**
+   * Settle what the room draws from, and hand back whether it moved.
+   *
+   * Mix off, this is the host's selection and nothing else. Mix on, it is
+   * everybody's pooled -- falling back to the host's alone if a mix somehow
+   * empties, because a room with nothing to draw from has no start button worth
+   * pressing.
+   *
+   * A new pool means a clean slate: history is keyed by song rather than by
+   * pack, and historyLimit is sized against the list we are about to draw from,
+   * so carrying 40 held-back songs into a smaller selection could starve it.
+   */
+  recomputePack() {
+    const fallback = selectPacks(this.selectionIds);
+    const next = (this.mix ? mixSelection(this.mixParts()) : null) || fallback || this.pack;
+    if (!next || (this.pack && next.key === this.pack.key)) return false;
+
+    this.pack = next;
+    this.packIds = next.ids;
     this.packPositions = null;
-    // History is keyed by song rather than by pack, and historyLimit is sized
-    // against the list we are about to draw from -- carrying 40 held-back songs
-    // into a smaller selection could starve it. New selection, clean slate.
     this.history = [];
     // A previous game that came up short must not shrink this one.
     this.totalRounds = this.configuredRounds;
-    const label = selection.imported
-      ? 'Playlist is'
-      : (selection.ids.length > 1 ? 'Song packs are' : 'Song pack is');
-    this.system('pack', `${label} now ${selection.name}.`, { packName: selection.name });
+    // ...nor should it still be complained about: a different pool is a
+    // different answer to "can this fill a game".
+    this.lastShortfall = null;
+    return true;
+  }
+
+  /**
+   * Somebody changing which packs they bring, from the lobby, between games.
+   *
+   * The host's pick is the room's, except in a mix -- where it is one
+   * contribution among however many, and everybody else's click counts too.
+   *
+   * The client sends the whole selection rather than a pack to toggle, so a
+   * click that crosses with a state sync cannot leave the two disagreeing about
+   * what is on. An unknown selection is ignored; an empty one is how a mix
+   * contributor withdraws, and is refused for the host, who has to leave the
+   * room *something* to play.
+   */
+  setPacks(pid, packIds) {
+    if (this.daily) return;
+    if (this.state !== 'lobby' && this.state !== 'ended') return;
+    const player = this.players.get(pid);
+    if (!player) return;
+    const isHost = pid === this.hostPid;
+    // Off-mix the pool is the host's alone, so nobody else's click means anything.
+    if (!this.mix && !isHost) return;
+
+    const wanted = Array.isArray(packIds) ? packIds : [packIds];
+    const selection = wanted.length ? selectPacks(wanted) : null;
+
+    if (!selection) {
+      if (wanted.length || isHost || !this.mix) return; // unknown ids, or a floor
+      if (!player.pick) return;
+      player.pick = null;
+      this.recomputePack();
+      this.system('pack', `${player.name} is not bringing any songs.`, { pid, name: player.name });
+      this.syncState();
+      return;
+    }
+
+    const same = player.pick && player.pick.join('+') === selection.ids.join('+');
+    player.pick = selection.ids;
+    if (isHost) this.selectionIds = selection.ids;
+    const moved = this.recomputePack();
+    if (same && !moved) return;
+
+    if (this.mix) {
+      this.system('pack', `${player.name} is bringing ${selection.name}.`, {
+        pid,
+        name: player.name,
+        packName: selection.name
+      });
+    } else {
+      const label = selection.imported
+        ? 'Playlist is'
+        : (selection.ids.length > 1 ? 'Song packs are' : 'Song pack is');
+      this.system('pack', `${label} now ${selection.name}.`, { packName: selection.name });
+    }
+    this.syncState();
+  }
+
+  /**
+   * Host turning the mix on or off.
+   *
+   * Turning it on seeds the host's own pick from what the room was already
+   * playing, so the switch changes who *may* add songs without changing what is
+   * queued up right now. Turning it off puts the host's selection back -- which
+   * is why it was kept separately all along.
+   *
+   * Single player has nobody to mix with, and a daily has nothing to configure.
+   */
+  setMix(pid, on) {
+    if (this.daily || this.solo) return;
+    if (pid !== this.hostPid) return;
+    if (this.state !== 'lobby' && this.state !== 'ended') return;
+    const next = !!on;
+    if (next === this.mix) return;
+
+    this.mix = next;
+    if (next) {
+      const host = this.players.get(this.hostPid);
+      if (host && !(host.pick && host.pick.length)) host.pick = this.selectionIds.slice();
+    }
+    this.recomputePack();
+    this.system('mix', next
+      ? 'Mix is on — everyone picks their own songs and all of them get played.'
+      : `Mix is off — the room plays ${this.pack ? this.pack.name : 'the host\'s selection'}.`,
+    { mix: next });
     this.syncState();
   }
 
@@ -500,6 +726,43 @@ class Room {
         difficultyLabel: level.name
       });
     }
+    this.syncState();
+  }
+
+  /**
+   * Host setting how long a game runs.
+   *
+   * Lobby-only like every other setting, and clamped to what the song supply
+   * can actually promise (see MAX_ROUNDS). The lobby warns separately when the
+   * pool itself is too small for the number asked for -- this does not clamp
+   * against the pack, because the pack can change afterwards and a control that
+   * silently lowered itself when somebody swapped a playlist in would be worse
+   * than one that says what it cannot do.
+   */
+  setRounds(pid, value) {
+    if (this.daily) return;
+    if (pid !== this.hostPid) return;
+    if (this.state !== 'lobby' && this.state !== 'ended') return;
+    const next = clampRounds(value);
+    if (next === this.configuredRounds) return;
+
+    this.configuredRounds = next;
+    // The lobby reads totalRounds, so leaving it behind would have the readout
+    // disagree with the control until a game had been played.
+    this.totalRounds = next;
+    // historyLimit() is sized against the round count and has just moved.
+    // remember() only trims on write, so without this a raised count would
+    // carry an over-long history into the next game -- and held-back songs do
+    // not count towards the resolver's quota, which is exactly how a game ends
+    // up shorter than it was asked to be.
+    const limit = this.historyLimit();
+    if (this.history.length > limit) {
+      this.history = this.history.slice(this.history.length - limit);
+    }
+    // A new length is a fresh promise; whether the *last* game came up short
+    // says nothing about whether this one will.
+    this.lastShortfall = null;
+    this.system('rounds', `Games are now ${next} rounds.`, { rounds: next });
     this.syncState();
   }
 
@@ -547,9 +810,11 @@ class Room {
     // An imported playlist is a flat pool -- every song equally likely -- so it
     // gets a plain shuffle. Reaching for weightedOrder() here would not be
     // neutral, it would rank by playlist position; see difficulty.uniformOrder.
-    const shuffled = this.pack.equalWeight
-      ? uniformOrder(this.pack.tracks)
-      : weightedOrder(this.pack.tracks, this.difficulty);
+    const shuffled = this.pack.parts
+      ? this.mixOrder()
+      : (this.pack.equalWeight
+        ? uniformOrder(this.pack.tracks)
+        : weightedOrder(this.pack.tracks, this.difficulty));
     if (!recent.size) return shuffled;
 
     const fresh = [];
@@ -558,6 +823,49 @@ class Room {
       (recent.has(trackKey(track)) ? repeats : fresh).push(track);
     }
     return fresh.concat(repeats);
+  }
+
+  /**
+   * A mixed pool, taken a song at a time from each contribution in turn.
+   *
+   * Round-robin rather than one shuffle of the union, because "sampled equally"
+   * has to mean equal *turns*: the union is dominated by whoever picked the
+   * biggest packs, and a flat shuffle of it would hand somebody who chose All
+   * Time six times the share of somebody who chose one genre pack.
+   *
+   * Each contribution is ordered by its own rules first -- weighted by the
+   * room's difficulty, or shuffled flat where that is meaningless -- so the
+   * slider still means what it says inside every one of them. The first turn is
+   * given out at random, since in a game that runs out of playable songs the
+   * front of the list is worth marginally more than the back.
+   */
+  mixOrder() {
+    const queues = this.pack.parts.map((part) => (part.equalWeight
+      ? uniformOrder(part.tracks)
+      : weightedOrder(part.tracks, this.difficulty)));
+    const cursors = queues.map(() => 0);
+    const first = crypto.randomInt(queues.length);
+    const seen = new Set();
+    const out = [];
+
+    for (let live = queues.length; live > 0;) {
+      for (let k = 0; k < queues.length; k++) {
+        const q = (first + k) % queues.length;
+        const queue = queues[q];
+        // Overlap between two people's packs is normal, so a turn is spent on
+        // the next song this contribution has that nobody has offered yet.
+        while (cursors[q] < queue.length) {
+          const track = queue[cursors[q]++];
+          const key = dedupeKey(track.title, track.artist);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(track);
+          break;
+        }
+      }
+      live = cursors.reduce((n, at, q) => n + (at < queues[q].length ? 1 : 0), 0);
+    }
+    return out;
   }
 
   remember(tracks) {
@@ -788,6 +1096,11 @@ class Room {
     this.tracks = tracks;
     this.remember(this.tracks);
     this.totalRounds = this.tracks.length;
+    // A game that could not be filled says so in the lobby afterwards. A daily
+    // is exempt: its length is decided a level up, not asked for here.
+    this.lastShortfall = !this.daily && this.tracks.length < this.configuredRounds
+      ? { got: this.tracks.length, asked: this.configuredRounds }
+      : null;
     this.roundIndex = -1;
     prefetch(this.tracks.map((t) => t.previewUrl));
 
@@ -1151,4 +1464,13 @@ setInterval(() => {
   }
 }, 30000).unref();
 
-module.exports = { createRoom, getRoom, rooms, ROUND_MS, REVEAL_MS, MODES, DEFAULT_MODE };
+module.exports = {
+  createRoom,
+  getRoom,
+  rooms,
+  ROUND_MS,
+  REVEAL_MS,
+  MODES,
+  MODE_CATALOG,
+  DEFAULT_MODE
+};
