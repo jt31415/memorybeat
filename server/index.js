@@ -183,7 +183,9 @@ function liveDailyRoom(day, discordId) {
  * whether you have played, how you did yesterday, and every board.
  *
  * Yesterday's songs are sent because they are no longer a secret. Today's are
- * never sent -- your own run today comes back as times only.
+ * sent only to somebody whose run is already filed: they have heard all five,
+ * and the one-run rule means knowing them now buys nothing. Everyone else --
+ * signed out, not yet played, or mid-run -- gets no titles.
  */
 app.get('/api/daily', (req, res) => {
   const day = daily.today();
@@ -205,6 +207,7 @@ app.get('/api/daily', (req, res) => {
       ? { id: user.id, name: user.username, avatar: auth.avatarUrl(user.id, user.avatar) }
       : null,
     played: mine,
+    songs: mine ? daily.songsFor(day) : [],
     // A run that was started and walked away from. Offered back rather than
     // silently replaced: refreshing at the wrong moment should not cost
     // somebody the songs they were halfway through.

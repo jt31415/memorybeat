@@ -229,8 +229,11 @@ function DailyAction({ data, view, setView, starting, onStart }) {
       <div className="card">
         {tabs}
         <ResultStats mine={mine} />
-        {/* Times only: today's titles are still somebody else's puzzle. */}
-        <SpeedCells roundMs={mine.roundMs} />
+        {/* The server sends today's titles only once your run is filed. They
+            stay off the share line: that is still somebody else's puzzle. */}
+        {data.songs && data.songs.length
+          ? <RoundList roundMs={mine.roundMs} songs={data.songs} />
+          : <SpeedCells roundMs={mine.roundMs} />}
         <ShareButton day={data.day} result={mine} />
       </div>
     );
