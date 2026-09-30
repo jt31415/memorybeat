@@ -4,6 +4,9 @@ npm-debug.log*
 data/memorybeat.db
 data/memorybeat.db-shm
 data/memorybeat.db-wal
+data/state.db
+data/state.db-shm
+data/state.db-wal
 .env
 .env.local
 

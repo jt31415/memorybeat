@@ -90,6 +90,7 @@ const el = {
   again: $('again'),
   menuLink: $('menu-link'),
   dailyNote: $('daily-note'),
+  dailyShare: $('daily-share'),
   scores: $('scores'),
   pcount: $('pcount'),
   kickBar: $('kick-bar'),
@@ -1915,6 +1916,13 @@ function clearRoundBoard() {
 
 const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
 
+/** When the next daily lands -- midnight UTC -- as a local clock time. */
+function nextDailyAt() {
+  const now = new Date();
+  const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  return reset.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
 /** A `·`-joined line of small print, built as text so nothing can inject markup. */
 function setDotted(node, parts) {
   node.textContent = parts.filter(Boolean).join(' · ');
@@ -2203,9 +2211,15 @@ socket.on('game:over', (summary) => {
   el.dailyNote.classList.toggle('hidden', !summary.daily);
   if (summary.daily) {
     el.dailyNote.textContent = summary.daily.recorded
-      ? "Your run is on today's leaderboard. Next five songs at midnight UTC."
+      ? `Your run is on today's leaderboard. Next five songs at ${nextDailyAt()}.`
       : "You'd already finished today's challenge, so this run wasn't counted.";
   }
+
+  // Only a run that was filed has a rank to share.
+  const result = summary.daily && summary.daily.result;
+  el.dailyShare.replaceChildren();
+  el.dailyShare.classList.toggle('hidden', !result);
+  if (result) el.dailyShare.appendChild(MBShare.button(summary.daily.day, result, 'btn btn-block'));
 
   showView('final');
 });

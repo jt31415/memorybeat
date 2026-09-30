@@ -11,3 +11,5 @@ deploy.env.example
 README.md
 .env
 .env.local
+data/state.db
+data/state.db-*

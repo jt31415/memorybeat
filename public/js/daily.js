@@ -19,11 +19,13 @@ const el = {
   action: $('daily-action'),
   error: $('daily-error'),
   board: $('board-list'),
-  boardEmpty: $('board-empty')
+  boardEmpty: $('board-empty'),
+  boardCaption: $('board-caption')
 };
 
 let data = null;
 let board = 'today';
+let view = 'today'; // whose result the action area shows: 'today' | 'yesterday'
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -39,13 +41,23 @@ function clear(parent) {
   while (parent.firstChild) parent.removeChild(parent.firstChild);
 }
 
+/**
+ * A challenge's date as the viewer would name it: the local date of the moment
+ * it went live.
+ *
+ * Days are keyed on UTC, and in UTC terms a player in California meets the new
+ * challenge at 5pm -- labelled with the UTC date, which there is already
+ * tomorrow. The moment it went live is a fixed instant, so naming it in local
+ * time gives each challenge one stable date per timezone for its whole
+ * twenty-four hours: the evening it arrives, for anyone west of Greenwich, and
+ * the UTC date itself for anyone east of it.
+ */
+function localDate(day, options) {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, options);
+}
+
 function prettyDate(day) {
-  // The day key is already UTC; parsing it back as UTC and formatting in UTC
-  // keeps the date on screen the same as the one the challenge is keyed on.
-  const date = new Date(`${day}T00:00:00Z`);
-  return date.toLocaleDateString(undefined, {
-    weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC'
-  });
+  return localDate(day, { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -90,6 +102,9 @@ function runClock(until) {
  * Five possibilities, and they are mutually exclusive by construction -- the
  * server decides which by what it puts in the payload, so this cannot end up
  * showing a Play button to somebody who has already played.
+ *
+ * Signed in, there is also a look back at yesterday, which is its own view
+ * rather than a sixth state: whatever today looks like, yesterday is final.
  */
 function paintAction() {
   clear(el.action);
@@ -101,9 +116,33 @@ function paintAction() {
   }
 
   if (!data.user) return paintSignIn();
+
+  el.action.appendChild(whoami());
+  el.action.appendChild(dayTabs());
+  if (view === 'yesterday') return paintYesterday();
   if (data.played) return paintResult();
   if (data.resume) return paintResume();
   return paintPlay();
+}
+
+/** Today | Yesterday. */
+function dayTabs() {
+  const row = node('div', 'day-tabs');
+  row.setAttribute('role', 'tablist');
+  row.setAttribute('aria-label', 'Your results');
+  for (const [key, label] of [['today', 'Today'], ['yesterday', 'Yesterday']]) {
+    const tab = node('button', 'day-tab', label);
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(view === key));
+    tab.addEventListener('click', () => {
+      if (view === key) return;
+      view = key;
+      paintAction();
+    });
+    row.appendChild(tab);
+  }
+  return row;
 }
 
 function paintSignIn() {
@@ -118,48 +157,100 @@ function paintSignIn() {
 }
 
 function paintPlay() {
-  el.action.appendChild(whoami());
-
   const button = node('button', 'btn btn-primary btn-block', `Play today's ${data.rounds} songs`);
-  button.addEventListener('click', () => start(button, false));
+  button.addEventListener('click', () => start(button));
   el.action.appendChild(button);
 
   el.action.appendChild(node('p', 'hint',
-    'Type the title before the clip runs out. One run a day — finishing it locks '
-    + 'your score in, so give it your full attention.'));
+    'Type the title before the clip runs out. One run a day, no restarts — once '
+    + "you press play, finishing or leaving locks your score in, so give it your full attention."));
 }
 
-/** A run that was started and walked away from. */
+/** A run still in progress -- the page was left moments ago. Back in, or it
+    gets filed as it stands. There is no starting over. */
 function paintResume() {
-  el.action.appendChild(whoami());
   el.action.appendChild(node('p', 'hint',
-    "You've got a run in progress. Pick it back up, or throw it away and start "
-    + "today's five from the top."));
+    "You've got a run in progress and the clock is still going. Jump back in "
+    + "now — leave it and it's filed with the rounds you've played."));
 
-  const row = node('div', 'daily-buttons');
-  const resume = node('button', 'btn btn-primary', 'Resume run');
+  const resume = node('button', 'btn btn-primary btn-block', 'Resume run');
   resume.addEventListener('click', () => { location.href = `/r/${data.resume}`; });
-
-  const restart = node('button', 'btn', 'Start over');
-  restart.addEventListener('click', () => start(restart, true));
-
-  row.append(resume, restart);
-  el.action.appendChild(row);
+  el.action.appendChild(resume);
 }
 
 /** Already played today: the result, and where it put them. */
 function paintResult() {
   const mine = data.played;
-  el.action.appendChild(whoami());
-
-  const card = node('div', 'daily-result');
-  card.appendChild(stat(String(mine.score), 'points'));
-  card.appendChild(stat(`${mine.correct}/${mine.rounds}`, 'correct'));
-  card.appendChild(stat(`#${mine.rank}`, `of ${mine.of}`));
-  el.action.appendChild(card);
+  el.action.appendChild(resultCard(mine));
+  // Times only: today's titles are still somebody else's puzzle.
+  const rounds = roundList(mine.roundMs, null);
+  if (rounds) el.action.appendChild(rounds);
+  el.action.appendChild(MBShare.button(data.day, mine));
 
   el.action.appendChild(node('p', 'hint',
     "That's today's run done. The next five songs land when the clock above runs out."));
+}
+
+/** Yesterday: final result if there was one, and the songs either way. */
+function paintYesterday() {
+  const y = data.yesterday;
+  const mine = y.played;
+
+  if (mine) {
+    el.action.appendChild(resultCard(mine));
+  } else {
+    el.action.appendChild(node('p', 'hint', y.songs.length
+      ? "You didn't play yesterday's challenge. Here's what you missed:"
+      : 'There was no challenge yesterday.'));
+  }
+
+  const rounds = roundList(mine ? mine.roundMs : null, y.songs.length ? y.songs : null);
+  if (rounds) el.action.appendChild(rounds);
+  if (mine) el.action.appendChild(MBShare.button(y.day, mine));
+}
+
+function resultCard(mine) {
+  const card = node('div', 'daily-result');
+  card.appendChild(stat(mine.score.toLocaleString(), 'points'));
+  card.appendChild(stat(`${mine.correct}/${mine.rounds}`, 'correct'));
+  card.appendChild(stat(`#${mine.rank}`, `of ${mine.of}`));
+  return card;
+}
+
+/**
+ * One row per round: the square, the song when it can be shown, the time.
+ *
+ * Either input can be missing -- a run from before round times were kept has
+ * no times, and today has no songs to show -- and the list is built from
+ * whichever is there. Neither means there is nothing to list.
+ */
+function roundList(roundMs, songs) {
+  const count = songs ? songs.length : (roundMs ? roundMs.length : 0);
+  if (!count) return null;
+
+  const list = node('ol', 'daily-rounds');
+  for (let i = 0; i < count; i++) {
+    const li = node('li', 'daily-round');
+    li.appendChild(node('span', 'daily-round-n', String(i + 1)));
+
+    const song = songs && songs[i];
+    const what = node('span', 'daily-round-song');
+    if (song) {
+      what.appendChild(node('b', null, song.title));
+      what.appendChild(node('span', null, song.artist));
+    } else {
+      what.appendChild(node('b', null, `Round ${i + 1}`));
+    }
+    li.appendChild(what);
+
+    if (roundMs) {
+      const ms = roundMs[i];
+      li.appendChild(node('span', `daily-round-time${ms == null ? ' miss' : ''}`,
+        `${MBShare.square(ms)} ${ms == null ? 'miss' : `${(ms / 1000).toFixed(1)}s`}`));
+    }
+    list.appendChild(li);
+  }
+  return list;
 }
 
 function stat(value, label) {
@@ -193,15 +284,11 @@ function whoami() {
 
 /* --------------------------------------------------------------- playing */
 
-async function start(button, restart) {
+async function start(button) {
   button.disabled = true;
   showError('');
   try {
-    const res = await fetch('/api/daily/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ restart: !!restart })
-    });
+    const res = await fetch('/api/daily/start', { method: 'POST' });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.code) {
       button.disabled = false;
@@ -220,14 +307,48 @@ async function start(button, restart) {
 
 /* ---------------------------------------------------------- leaderboards */
 
+const EMPTY_BOARD = {
+  today: "Nobody has finished today's challenge yet. Be first.",
+  yesterday: "Nobody finished yesterday's challenge.",
+  week: 'No runs yet this week. Be first.',
+  allTime: 'No runs recorded yet.'
+};
+
+/** Boards over one day show a run; boards over many show a total. */
+const isDayBoard = (key) => key === 'today' || key === 'yesterday';
+
+function shortDate(day) {
+  return localDate(day, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+/* What span a board covers, where that is not obvious from its name. The week
+   is the one that needs it most: "this week" means Monday to Sunday UTC --
+   which, named in local time like every other date here, is Sunday to Saturday
+   for anyone in the Americas -- and saying when it resets is what makes it
+   read as a race. */
+function boardCaption() {
+  if (board === 'yesterday') return shortDate(data.yesterday.day);
+  if (board === 'week') {
+    const left = Math.max(0, data.weekResetsAt - Date.now());
+    const days = Math.floor(left / 86400000);
+    const hours = Math.floor(left / 3600000) % 24;
+    const lastDay = new Date(data.weekResetsAt - 86400000).toISOString().slice(0, 10);
+    return `${shortDate(data.weekStart)} – ${shortDate(lastDay)} · resets in `
+      + (days ? `${days}d ${hours}h` : `${hours}h`);
+  }
+  return '';
+}
+
 function paintBoard() {
-  const rows = board === 'today' ? data.today : data.allTime;
+  const rows = data.boards[board] || [];
   clear(el.board);
 
+  const caption = boardCaption();
+  el.boardCaption.textContent = caption;
+  el.boardCaption.classList.toggle('hidden', !caption);
+
   el.boardEmpty.classList.toggle('hidden', rows.length > 0);
-  el.boardEmpty.textContent = board === 'today'
-    ? "Nobody has finished today's challenge yet. Be first."
-    : 'No runs recorded yet.';
+  el.boardEmpty.textContent = EMPTY_BOARD[board];
 
   const meId = data.user ? data.user.id : null;
   rows.forEach((entry, i) => el.board.appendChild(boardRow(entry, i + 1, entry.id === meId)));
@@ -248,9 +369,9 @@ function boardRow(entry, rank, isMe) {
   who.appendChild(node('b', null, entry.name));
   li.appendChild(who);
 
-  // The all-time board carries a days count the daily one has no room for and
+  // The multi-day boards carry a days count the daily ones have no room for and
   // no meaning for -- one row shape, one extra column when there is one.
-  li.appendChild(node('span', 'board-meta', board === 'today'
+  li.appendChild(node('span', 'board-meta', isDayBoard(board)
     ? `${entry.correct}/${entry.rounds}`
     : `${entry.days} day${entry.days === 1 ? '' : 's'}`));
   li.appendChild(node('span', 'board-score', entry.score.toLocaleString()));

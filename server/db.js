@@ -100,10 +100,27 @@ CREATE TABLE IF NOT EXISTS pack_tracks (
 
 CREATE INDEX IF NOT EXISTS idx_pack_tracks_pack ON pack_tracks (pack_id);
 
--- Small key/value store for things the server has to remember across restarts
--- but that are not catalogue. Currently one row: the session-signing secret,
--- generated on first boot when SESSION_SECRET is not set, so a restart does not
--- log every daily-challenge player out. See server/auth.js.
+`;
+
+/*
+ * Everything the server writes while it runs, kept out of the catalogue file.
+ *
+ * memorybeat.db is a *build artefact*: scripts/build-packs.js produces it, the
+ * image ships it as a seed, and a reseed overwrites it wholesale with whatever
+ * the build machine had. That is right for songs and packs and disastrous for
+ * anything players made -- a reseed that carried these tables replaced the live
+ * leaderboard with the build machine's test runs and logged everybody out. So
+ * they live in their own file, which the image never contains and the
+ * entrypoint never touches.
+ */
+const STATE_FILE = process.env.MEMORYBEAT_STATE_DB
+  || path.join(path.dirname(DB_FILE), 'state.db');
+
+const STATE_SCHEMA = `
+-- Small key/value store for things the server has to remember across restarts.
+-- Mostly the session-signing secret, generated on first boot when
+-- SESSION_SECRET is not set, so a restart does not log every daily-challenge
+-- player out. See server/auth.js.
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -111,12 +128,13 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- The daily challenge's five songs, frozen.
 --
--- The selection is deterministic from the date alone (see daily.js), but which
--- of the chosen songs iTunes can actually serve a preview for is not: a lookup
--- that fails at 09:00 may succeed at 21:00. Recomputing per request would hand
--- two players different songs on the same day, which is exactly the thing a
--- daily challenge cannot do. So the first request of the day settles it and
--- writes it here, and everyone else that day reads this row.
+-- Which songs a day *tries* is decided by daily.js, but which of those iTunes
+-- can actually serve a preview for is not: a lookup that fails at 09:00 may
+-- succeed at 21:00. Recomputing per request would hand two players different
+-- songs on the same day, which is exactly the thing a daily challenge cannot
+-- do. So the first request of the day settles it and writes it here, and
+-- everyone else that day reads this row. The rows are kept forever: they are
+-- also the history the song picker reads to avoid repeating itself.
 CREATE TABLE IF NOT EXISTS daily_challenges (
   day        TEXT PRIMARY KEY,   -- 'YYYY-MM-DD', UTC
   tracks     TEXT NOT NULL,      -- JSON [{title, artist, query?, year?}]
@@ -124,7 +142,7 @@ CREATE TABLE IF NOT EXISTS daily_challenges (
 );
 
 -- One finished run per Discord account per day. The primary key is the rule:
--- an abandoned run writes nothing and can be retried, a finished one is final.
+-- a finished run is final, and so is one the player walked out of.
 CREATE TABLE IF NOT EXISTS daily_runs (
   day         TEXT    NOT NULL,
   discord_id  TEXT    NOT NULL,
@@ -135,6 +153,8 @@ CREATE TABLE IF NOT EXISTS daily_runs (
   rounds      INTEGER NOT NULL,
   total_ms    INTEGER,            -- summed solve times, correct rounds only
   best_ms     INTEGER,
+  round_ms    TEXT,               -- JSON [ms | null] per round, null = missed;
+                                  -- absent on runs from before it was recorded
   finished_at INTEGER NOT NULL,
   PRIMARY KEY (day, discord_id)
 );
@@ -145,21 +165,89 @@ CREATE INDEX IF NOT EXISTS idx_daily_runs_board ON daily_runs (day, score DESC, 
 CREATE INDEX IF NOT EXISTS idx_daily_runs_user  ON daily_runs (discord_id);
 `;
 
-let db = null;
+/** The tables that used to live in memorybeat.db, and the columns they had. */
+const LEGACY_STATE = {
+  settings: ['key', 'value'],
+  daily_challenges: ['day', 'tracks', 'created_at'],
+  daily_runs: ['day', 'discord_id', 'username', 'avatar', 'score', 'correct', 'rounds',
+    'total_ms', 'best_ms', 'finished_at']
+};
 
-function open() {
-  if (db) return db;
-  fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
-  db = new DatabaseSync(DB_FILE);
+let db = null;
+let stateDb = null;
+
+function connect(file) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const conn = new DatabaseSync(file);
   // WAL lets the server keep reading while the build script writes.
-  db.exec('PRAGMA journal_mode = WAL');
+  conn.exec('PRAGMA journal_mode = WAL');
   // Wait for a competing writer instead of failing outright: the build script
   // and a running server can genuinely overlap, and a few seconds of patience
   // is better than aborting a scrape that took minutes to get this far.
-  db.exec('PRAGMA busy_timeout = 10000');
-  db.exec('PRAGMA foreign_keys = ON');
+  conn.exec('PRAGMA busy_timeout = 10000');
+  conn.exec('PRAGMA foreign_keys = ON');
+  return conn;
+}
+
+/** The catalogue: tracks and packs. */
+function open() {
+  if (db) return db;
+  db = connect(DB_FILE);
   db.exec(SCHEMA);
   return db;
+}
+
+/** The runtime state: settings and the daily challenge. */
+function state() {
+  if (stateDb) return stateDb;
+  stateDb = connect(STATE_FILE);
+  stateDb.exec(STATE_SCHEMA);
+  importLegacyState(stateDb);
+  return stateDb;
+}
+
+/**
+ * One-time move of the state tables out of memorybeat.db.
+ *
+ * Runs once per state file, ever, and remembers that it has with a marker row.
+ * The "once" matters: a later reseed brings in a memorybeat.db from the build
+ * machine, and if that still carried old tables they must never be read as
+ * though they were this server's history. (The image strips them anyway -- see
+ * scripts/prepare-seed.js -- this is the second lock on the same door.)
+ *
+ * INSERT OR IGNORE, so a state row that already exists always beats the legacy
+ * copy of it. The legacy tables are left where they are: harmless, and they
+ * make rolling back to the previous build a non-event.
+ */
+function importLegacyState(conn) {
+  const done = conn.prepare("SELECT 1 FROM settings WHERE key = 'legacy_state_imported'").get();
+  if (done) return;
+
+  if (fs.existsSync(DB_FILE) && path.resolve(DB_FILE) !== path.resolve(STATE_FILE)) {
+    conn.prepare('ATTACH DATABASE ? AS legacy').run(DB_FILE);
+    try {
+      transaction(conn, () => {
+        for (const [table, columns] of Object.entries(LEGACY_STATE)) {
+          const exists = conn
+            .prepare("SELECT 1 FROM legacy.sqlite_master WHERE type = 'table' AND name = ?")
+            .get(table);
+          if (!exists) continue;
+          const cols = columns.join(', ');
+          const info = conn
+            .prepare(`INSERT OR IGNORE INTO main.${table} (${cols}) SELECT ${cols} FROM legacy.${table}`)
+            .run();
+          if (info.changes) {
+            console.log(`[db] moved ${info.changes} ${table} row(s) into ${path.basename(STATE_FILE)}`);
+          }
+        }
+      });
+    } finally {
+      conn.exec('DETACH DATABASE legacy');
+    }
+  }
+
+  conn.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('legacy_state_imported', ?)")
+    .run(String(Date.now()));
 }
 
 /**
@@ -186,12 +274,12 @@ function transaction(conn, fn) {
 /* ------------------------------------------------------------- settings kv */
 
 function getSetting(key) {
-  const row = open().prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  const row = state().prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : null;
 }
 
 function setSetting(key, value) {
-  open()
+  state()
     .prepare('INSERT INTO settings (key, value) VALUES (?, ?)'
       + ' ON CONFLICT (key) DO UPDATE SET value = excluded.value')
     .run(key, String(value));
@@ -207,11 +295,16 @@ function isPopulated() {
 }
 
 function close() {
-  if (!db) return;
-  try {
-    db.close();
-  } catch { /* already gone */ }
+  for (const conn of [db, stateDb]) {
+    if (!conn) continue;
+    try {
+      conn.close();
+    } catch { /* already gone */ }
+  }
   db = null;
+  stateDb = null;
 }
 
-module.exports = { open, close, transaction, isPopulated, getSetting, setSetting, DB_FILE };
+module.exports = {
+  open, state, close, transaction, isPopulated, getSetting, setSetting, DB_FILE, STATE_FILE
+};

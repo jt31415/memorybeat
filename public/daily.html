@@ -52,10 +52,13 @@
       <!-- leaderboards --------------------------------------------------- -->
       <div class="board-tabs" role="tablist" aria-label="Leaderboard">
         <button class="board-tab" data-board="today" role="tab" aria-selected="true">Today</button>
+        <button class="board-tab" data-board="yesterday" role="tab" aria-selected="false">Yesterday</button>
+        <button class="board-tab" data-board="week" role="tab" aria-selected="false">This week</button>
         <button class="board-tab" data-board="allTime" role="tab" aria-selected="false">All time</button>
       </div>
 
       <div class="board" id="board">
+        <p class="board-caption hidden" id="board-caption"></p>
         <p class="hint" id="board-empty">Nobody has finished today's challenge yet. Be first.</p>
         <ol class="board-list" id="board-list"></ol>
       </div>
@@ -64,6 +67,7 @@
     <p class="credits">Made by Nisc_ and jt314</p>
   </main>
 
+  <script src="/js/share.js"></script>
   <script src="/js/daily.js"></script>
 </body>
 </html>

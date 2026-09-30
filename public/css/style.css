@@ -1946,6 +1946,9 @@ input[type="range"]::-moz-range-thumb {
 }
 .final-actions .btn { text-decoration: none; }
 
+.daily-share { max-width: 320px; margin: 0 auto 12px; }
+.daily-share .btn { justify-content: center; }
+
 .loading-dots::after { content: ""; animation: dots 1.4s steps(4, end) infinite; }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 
@@ -2357,9 +2360,16 @@ input[type="range"]::-moz-range-thumb {
 /* The panel is a flex column with a max height (see .shell > .panel), so the
    board is the one child allowed to give up space -- everything above it is
    the point of the page and must stay on screen. */
+/* Unlike the other panels this one is allowed to grow past the viewport: a
+   finished run with its round list and share button is taller than a phone
+   screen, and squeezing it left the board and the button hanging below the
+   panel's border. So the page scrolls, and the board caps its own height and
+   scrolls inside that, so a hundred rows do not make the page endless. */
+.shell > .daily-panel { max-height: none; flex-shrink: 0; }
 .daily-panel .board {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: none;
+  max-height: 60vh;
+  min-height: 120px;
   overflow-y: auto;
 }
 /* The global .hint pulls itself up by 10px to sit under a field label. There is
@@ -2461,6 +2471,88 @@ input[type="range"]::-moz-range-thumb {
   color: var(--muted);
 }
 
+/* Today | Yesterday for your own result: a small segmented switch, quieter than
+   the leaderboard tabs so the two rows of tabs do not read as one control. */
+.day-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+.day-tab {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.18s var(--ease), background 0.18s var(--ease);
+}
+.day-tab:hover { color: var(--text); }
+.day-tab[aria-selected="true"] { background: rgba(247, 185, 62, 0.14); color: var(--amber); }
+
+/* A run round by round. Today's has times only; yesterday's names the songs. */
+.daily-rounds {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.daily-round {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+.daily-round + .daily-round { border-top: 1px solid var(--line); }
+.daily-round-n {
+  width: 16px;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+.daily-round-song {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.daily-round-song b,
+.daily-round-song span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.daily-round-song b { font-size: 14px; font-weight: 600; }
+.daily-round-song span { font-size: 12.5px; color: var(--muted); }
+.daily-round-time {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.daily-round-time.miss { color: var(--muted); }
+
+.board-caption {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .board-tabs {
   display: flex;
   gap: 6px;
@@ -2541,6 +2633,9 @@ input[type="range"]::-moz-range-thumb {
 
 @media (max-width: 560px) {
   .daily-head { flex-direction: column; align-items: flex-start; gap: 12px; }
+  /* Four tabs have to share a phone's width. */
+  .board-tabs { gap: 0; }
+  .board-tab { flex: 1 1 auto; padding: 8px 4px; letter-spacing: 0.04em; }
   .daily-reset { text-align: left; }
   .mode-card .tag { top: 16px; right: 16px; }
 }

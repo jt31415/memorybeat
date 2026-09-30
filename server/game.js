@@ -19,6 +19,13 @@ const COUNTDOWN_MS = 3000;   // 3..2..1 before audio starts
 const LOAD_WAIT_MS = 12000;  // longest we wait for slow clients to buffer
 const LOAD_DEADLINE_MS = 15000; // longest we spend resolving songs before a game
 const EMPTY_ROOM_MS = 120000;
+/**
+ * How long a daily player can be gone mid-run before the run is filed as it
+ * stands. Leaving is final -- there is no starting over -- but a refresh or a
+ * dropped connection is not leaving, and this is the difference: long enough to
+ * reload the page, short enough that closing the tab means closing the run.
+ */
+const DAILY_ABANDON_MS = 15000;
 const DEFAULT_ROUNDS = 10;
 /**
  * How long a game may be set to run.
@@ -258,6 +265,11 @@ class Room {
       existing.connected = true;
       if (name) existing.name = cleanName(name);
       this.emptySince = null;
+      // Back inside the grace period: the daily run carries on.
+      if (this.dailyAbandon && pid === this.hostPid) {
+        clearTimeout(this.dailyAbandon);
+        this.dailyAbandon = null;
+      }
       this.seatMidRound(existing);
       return existing;
     }
@@ -338,6 +350,12 @@ class Room {
     }
     if (![...this.players.values()].some((p) => p.connected)) {
       this.emptySince = Date.now();
+    }
+    // A daily run the player walked out of still counts. Filed after a grace
+    // period rather than on the spot, so a refresh is not mistaken for leaving.
+    if (this.daily && pid === this.hostPid && this.started && this.state !== 'ended'
+        && !this.dailyAbandon) {
+      this.dailyAbandon = setTimeout(() => this.abandonDaily(), DAILY_ABANDON_MS);
     }
     // Somebody who was bringing songs to a mix has walked off with them. Only in
     // the lobby: mid-game the pool has already been drawn from, and re-settling
@@ -1686,10 +1704,10 @@ class Room {
   /**
    * Put a finished daily run on the leaderboard.
    *
-   * Here rather than anywhere earlier because "finished" is the rule the mode
-   * was built on: a run that is abandoned halfway writes nothing and can be
-   * started again, which is what lets somebody who lost their connection have
-   * another go. Reaching finish() is the only thing that spends the attempt.
+   * Called from finish(), which a run reaches either by playing its last round
+   * or by the player leaving and not coming back (abandonDaily). Either way the
+   * attempt is spent; a refresh inside the grace period is the only exit that
+   * is not.
    *
    * The score comes off the player object, which is the same number the game
    * has been broadcasting all along -- the client is never asked what it
@@ -1701,10 +1719,14 @@ class Room {
     if (!player || !user) return;
 
     const stats = this.playerStats(player.pid);
-    const totalMs = this.recap.reduce((sum, song) => {
-      const hit = song.solvers.find((s) => s.pid === player.pid);
-      return hit ? sum + hit.ms : sum;
-    }, 0);
+    // One entry per round of the run, including any never reached because the
+    // player left -- those count as misses, the same as a round they sat out.
+    const roundMs = Array.from({ length: this.totalRounds }, (_, i) => {
+      const song = this.recap[i];
+      const hit = song && song.solvers.find((s) => s.pid === player.pid);
+      return hit ? hit.ms : null;
+    });
+    const totalMs = roundMs.reduce((sum, ms) => sum + (ms || 0), 0);
 
     let recorded = false;
     try {
@@ -1713,7 +1735,8 @@ class Room {
         correct: stats.correct,
         rounds: this.totalRounds,
         totalMs: stats.correct ? totalMs : null,
-        bestMs: stats.bestMs
+        bestMs: stats.bestMs,
+        roundMs
       });
     } catch (err) {
       // A leaderboard write failing must not eat the final screen -- the player
@@ -1725,10 +1748,47 @@ class Room {
     // which normally means two tabs finished the same challenge. The client
     // says so rather than showing a score that quietly did not count.
     this.summary.daily = { day, recorded, name: user.username };
+
+    // Enough for the final screen to offer the share line straight away. Read
+    // back from the board rather than built from the numbers above, so the
+    // line shares the run that was filed -- and a run that was not filed has
+    // nothing to share.
+    if (recorded) {
+      try {
+        const mine = daily.dayRank(day, user.id);
+        if (mine) {
+          this.summary.daily.result = {
+            score: mine.score,
+            correct: mine.correct,
+            rounds: mine.rounds,
+            rank: mine.rank,
+            of: mine.of,
+            roundMs: mine.roundMs
+          };
+        }
+      } catch (err) {
+        console.error('[daily] could not read back run:', err.message);
+      }
+    }
+  }
+
+  /**
+   * The daily player left mid-run and did not come back: end the run here and
+   * file it with what they had scored. Rounds still to come are misses. This is
+   * what makes closing the tab final -- without it an abandoned run wrote
+   * nothing, and the same five songs could be tried again from the top.
+   */
+  abandonDaily() {
+    this.dailyAbandon = null;
+    const player = this.players.get(this.hostPid);
+    if (this.state === 'ended' || !player || player.connected) return;
+    console.log(`[daily] ${this.daily.day} run by ${this.daily.user.username} abandoned; filing as it stands`);
+    this.finish();
   }
 
   destroy() {
     this.clearTimers();
+    if (this.dailyAbandon) clearTimeout(this.dailyAbandon);
     // Not one of this.timers: a vote outlives round boundaries by design.
     if (this.kickVote) clearTimeout(this.kickVote.timer);
     rooms.delete(this.code);

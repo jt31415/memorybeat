@@ -10,9 +10,10 @@
  * Which is harder than it sounds, because the song list has two sources of
  * variation and only one of them is under our control:
  *
- *   - The *choice* is deterministic. A seeded shuffle of the easy end of the
- *     All Time pack, seeded from the date, so the candidate order is a pure
- *     function of the day and can be recomputed anywhere, any time.
+ *   - The *choice* is ours. A seeded shuffle of the easy end of the All Time
+ *     pack, seeded from the date, with anything a recent day already used
+ *     pushed to the back -- so the candidate order is a function of the day and
+ *     of the frozen history, both of which this server holds.
  *   - Whether a chosen song is *playable* is not. iTunes is rate limited and
  *     occasionally just does not have a track; a lookup that fails at 09:00 can
  *     succeed at 21:00. So the first request of the day walks the candidate
@@ -54,6 +55,15 @@ const DAILY_PACK = 'allTime';
  */
 const DAILY_POOL = 300;
 
+/**
+ * How many days back a song counts as "just played".
+ *
+ * Fifty songs out of a pool of three hundred: a sixth of the pool is resting at
+ * any time, which is enough that nobody meets last Tuesday's song again this
+ * week and little enough that the pool never runs dry.
+ */
+const RECENT_DAYS = 10;
+
 /** Longest we will spend resolving previews while settling a day's songs. */
 const DAILY_DEADLINE_MS = 25000;
 
@@ -75,6 +85,30 @@ function nextReset(now = Date.now()) {
 
 function isDayKey(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+}
+
+/** The day key `delta` days from `day` (negative for the past). */
+function shiftDay(day, delta) {
+  const date = new Date(`${day}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * The Monday that starts `day`'s week, as a day key.
+ *
+ * Calendar weeks, Monday to Sunday UTC, rather than a rolling seven days: a
+ * weekly board is a race with a finish line, and a rolling window has none --
+ * your score from eight days ago would just quietly fall off the bottom.
+ */
+function weekStart(day) {
+  const dow = new Date(`${day}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  return shiftDay(day, -((dow + 6) % 7));
+}
+
+/** When `day`'s week rolls over, in ms since the epoch. */
+function nextWeekReset(day) {
+  return Date.parse(`${shiftDay(weekStart(day), 7)}T00:00:00Z`);
 }
 
 /* ------------------------------------------------------------- the seed */
@@ -102,11 +136,35 @@ function seededRandom(day) {
 }
 
 /**
+ * Every song the RECENT_DAYS before `day` froze, as track keys.
+ *
+ * Read off the frozen rows, not recomputed from seeds: what matters is what
+ * people actually heard, and only the frozen row knows that.
+ */
+function recentKeys(day) {
+  const rows = db.state()
+    .prepare('SELECT tracks FROM daily_challenges WHERE day >= ? AND day < ?')
+    .all(shiftDay(day, -RECENT_DAYS), day);
+  const keys = new Set();
+  for (const row of rows) {
+    try {
+      for (const t of JSON.parse(row.tracks)) keys.add(trackKey(t));
+    } catch { /* a corrupt row just excludes nothing */ }
+  }
+  return keys;
+}
+
+/**
  * The day's candidate songs, most-wanted first.
  *
  * A full Fisher-Yates over the pool rather than five draws: the resolver may
  * have to walk past a good many of these before it finds five it can play, and
  * the order it walks has to be as deterministic as the first five would be.
+ *
+ * Songs from the last RECENT_DAYS go to the back rather than out. The resolver
+ * stops at five, so in practice it never reaches them; they are only there so
+ * that a day where iTunes refuses most of the fresh pool still gets a game
+ * rather than none.
  */
 function candidates(day) {
   const selection = selectPacks([DAILY_PACK]);
@@ -118,13 +176,22 @@ function candidates(day) {
     const j = Math.floor(random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  return pool;
+
+  const recent = recentKeys(day);
+  const fresh = pool.filter((t) => !recent.has(trackKey(t)));
+  const rested = pool.filter((t) => recent.has(trackKey(t)));
+  return fresh.concat(rested);
+}
+
+/** A frozen day's songs as the client may see them -- title and artist only. */
+function songsFor(day) {
+  return (readFrozen(day) || []).map((t) => ({ title: t.title, artist: t.artist }));
 }
 
 /* ------------------------------------------------------------ the freeze */
 
 function readFrozen(day) {
-  const row = db.open().prepare('SELECT tracks FROM daily_challenges WHERE day = ?').get(day);
+  const row = db.state().prepare('SELECT tracks FROM daily_challenges WHERE day = ?').get(day);
   if (!row) return null;
   try {
     const tracks = JSON.parse(row.tracks);
@@ -135,7 +202,7 @@ function readFrozen(day) {
 }
 
 function writeFrozen(day, tracks) {
-  db.open()
+  db.state()
     .prepare('INSERT INTO daily_challenges (day, tracks, created_at) VALUES (?, ?, ?)'
       + ' ON CONFLICT (day) DO NOTHING')
     .run(day, JSON.stringify(tracks), Date.now());
@@ -240,7 +307,7 @@ function warm() {
 
 /** Today's finished run for this account, or null. */
 function runFor(day, discordId) {
-  return db.open()
+  return db.state()
     .prepare('SELECT * FROM daily_runs WHERE day = ? AND discord_id = ?')
     .get(day, String(discordId)) || null;
 }
@@ -253,18 +320,22 @@ function runFor(day, discordId) {
  * on the floor. Deliberately not an upsert -- "best score kept" would reward
  * replaying a game whose answers you now know.
  *
- * An abandoned run never reaches here at all, so it can be retried. That is the
- * intended tradeoff: it lets somebody who lost their connection start again,
- * at the cost of letting somebody quit a bad first round and re-roll the same
- * five songs.
+ * A run the player walks out of reaches here too, with the rounds they never
+ * got to counted as misses (see Room.abandonDaily in game.js). There is no
+ * retry: quitting a bad first round would otherwise re-roll the same five
+ * songs, answers now known.
  *
  * @returns {boolean} true if this run was the one recorded
  */
 function recordRun(day, user, stats) {
-  const info = db.open()
+  const roundMs = Array.isArray(stats.roundMs)
+    ? JSON.stringify(stats.roundMs.map((ms) => (ms == null ? null : Math.max(0, Math.round(ms)))))
+    : null;
+  const info = db.state()
     .prepare(`INSERT INTO daily_runs
-                (day, discord_id, username, avatar, score, correct, rounds, total_ms, best_ms, finished_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (day, discord_id, username, avatar, score, correct, rounds, total_ms, best_ms,
+                 round_ms, finished_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT (day, discord_id) DO NOTHING`)
     .run(
       day,
@@ -276,6 +347,7 @@ function recordRun(day, user, stats) {
       Math.max(0, Math.round(stats.rounds) || 0),
       stats.totalMs == null ? null : Math.round(stats.totalMs),
       stats.bestMs == null ? null : Math.round(stats.bestMs),
+      roundMs,
       Date.now()
     );
   return info.changes > 0;
@@ -286,15 +358,16 @@ function recordRun(day, user, stats) {
 const BOARD_LIMIT = 100;
 
 /**
- * Ties break on who finished first.
+ * One day's runs, best first.
  *
- * Score already encodes speed to the millisecond (game.js pays out on elapsed
- * time), so an exact tie means two people were within a millisecond of each
- * other on all five songs and any tiebreak is arbitrary. Finish order is at
- * least a fact rather than a computation.
+ * Ties break on who finished first. Score already encodes speed to the
+ * millisecond (game.js pays out on elapsed time), so an exact tie means two
+ * people were within a millisecond of each other on all five songs and any
+ * tiebreak is arbitrary. Finish order is at least a fact rather than a
+ * computation.
  */
-function todayBoard(day, limit = BOARD_LIMIT) {
-  return db.open()
+function dayBoard(day, limit = BOARD_LIMIT) {
+  return db.state()
     .prepare(`SELECT discord_id, username, avatar, score, correct, rounds, best_ms, finished_at
                 FROM daily_runs
                WHERE day = ?
@@ -305,14 +378,14 @@ function todayBoard(day, limit = BOARD_LIMIT) {
 }
 
 /**
- * Every run ever, per account.
+ * Runs summed per account over a span of days (inclusive).
  *
  * Total score rather than average, so the board rewards turning up. An average
  * would put somebody who played once and got lucky above somebody who has
- * played every day since launch, which is not what an all-time board is for.
+ * played every day, which is not what a board over many days is for.
  */
-function allTimeBoard(limit = BOARD_LIMIT) {
-  return db.open()
+function spanBoard(from, to, limit = BOARD_LIMIT) {
+  return db.state()
     .prepare(`SELECT discord_id,
                      username,
                      avatar,
@@ -324,33 +397,56 @@ function allTimeBoard(limit = BOARD_LIMIT) {
                      MIN(best_ms) AS best_ms,
                      MAX(finished_at) AS finished_at
                 FROM daily_runs
+               WHERE day >= ? AND day <= ?
                GROUP BY discord_id
                ORDER BY score DESC, days DESC, finished_at ASC
                LIMIT ?`)
-    .all(limit)
+    .all(from, to, limit)
     .map((row) => ({ ...toEntry(row), days: row.days, best: row.best }));
 }
 
+/** This calendar week so far, Monday to `day`. */
+function weekBoard(day, limit = BOARD_LIMIT) {
+  return spanBoard(weekStart(day), day, limit);
+}
+
+/** Every run ever. */
+function allTimeBoard(limit = BOARD_LIMIT) {
+  return spanBoard('0000-00-00', '9999-99-99', limit);
+}
+
 /**
- * Where an account sits on a board it may be too far down to appear on.
+ * An account's run on a day, and where it sits on that day's board.
  *
  * Counting the rows above someone is cheap on the daily board (the index is in
  * exactly that order) and it means the client can always show "you", even at
- * rank 4,000, without shipping four thousand rows to find out.
+ * rank 4,000, without shipping four thousand rows to find out. Yesterday's rank
+ * is final; today's is a snapshot that later runs can push down.
  */
-function todayRank(day, discordId) {
+function dayRank(day, discordId) {
   const mine = runFor(day, discordId);
   if (!mine) return null;
-  const { above } = db.open()
+  const { above } = db.state()
     .prepare(`SELECT COUNT(*) AS above
                 FROM daily_runs
                WHERE day = ?
                  AND (score > ? OR (score = ? AND finished_at < ?))`)
     .get(day, mine.score, mine.score, mine.finished_at);
-  const { total } = db.open()
+  const { total } = db.state()
     .prepare('SELECT COUNT(*) AS total FROM daily_runs WHERE day = ?')
     .get(day);
-  return { rank: above + 1, of: total, ...toEntry(mine) };
+  return { rank: above + 1, of: total, ...toEntry(mine), roundMs: parseRoundMs(mine.round_ms) };
+}
+
+/** Per-round solve times, or null for a run filed before they were kept. */
+function parseRoundMs(json) {
+  if (!json) return null;
+  try {
+    const list = JSON.parse(json);
+    return Array.isArray(list) ? list : null;
+  } catch {
+    return null;
+  }
 }
 
 function toEntry(row) {
@@ -375,15 +471,21 @@ module.exports = {
   DAILY_ROUNDS,
   DAILY_PACK,
   DAILY_POOL,
+  RECENT_DAYS,
   today,
   nextReset,
   isDayKey,
+  shiftDay,
+  weekStart,
+  nextWeekReset,
   candidates,
+  songsFor,
   challenge,
   warm,
   runFor,
   recordRun,
-  todayBoard,
+  dayBoard,
+  weekBoard,
   allTimeBoard,
-  todayRank
+  dayRank
 };

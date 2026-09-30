@@ -176,18 +176,24 @@ function liveDailyRoom(day, discordId) {
 
 /**
  * Everything the daily page paints itself with, in one request: who you are,
- * whether you have played, and both boards.
+ * whether you have played, how you did yesterday, and every board.
+ *
+ * Yesterday's songs are sent because they are no longer a secret. Today's are
+ * never sent -- your own run today comes back as times only.
  */
 app.get('/api/daily', (req, res) => {
   const day = daily.today();
+  const yesterday = daily.shiftDay(day, -1);
   const user = req.user;
-  const mine = user ? daily.todayRank(day, user.id) : null;
+  const mine = user ? daily.dayRank(day, user.id) : null;
   const live = user && !mine ? liveDailyRoom(day, user.id) : null;
 
   res.json({
     day,
     rounds: daily.DAILY_ROUNDS,
     resetsAt: daily.nextReset(),
+    weekStart: daily.weekStart(day),
+    weekResetsAt: daily.nextWeekReset(day),
     // A deployment with no Discord credentials cannot run this mode at all, and
     // saying so beats a sign-in button that leads to an error page.
     available: auth.configured(),
@@ -199,24 +205,38 @@ app.get('/api/daily', (req, res) => {
     // silently replaced: refreshing at the wrong moment should not cost
     // somebody the songs they were halfway through.
     resume: live ? live.code : null,
-    today: daily.todayBoard(day),
-    allTime: daily.allTimeBoard()
+    yesterday: {
+      day: yesterday,
+      songs: daily.songsFor(yesterday),
+      played: user ? daily.dayRank(yesterday, user.id) : null
+    },
+    boards: {
+      today: daily.dayBoard(day),
+      yesterday: daily.dayBoard(yesterday),
+      week: daily.weekBoard(day),
+      allTime: daily.allTimeBoard()
+    }
   });
 });
 
-/** Either board on its own, for a refresh that does not need the rest. */
+/** The boards on their own, for a refresh that does not need the rest. */
 app.get('/api/daily/leaderboard', (req, res) => {
   const day = daily.isDayKey(req.query.day) ? String(req.query.day) : daily.today();
-  res.json({ day, today: daily.todayBoard(day), allTime: daily.allTimeBoard() });
+  res.json({
+    day,
+    today: daily.dayBoard(day),
+    week: daily.weekBoard(day),
+    allTime: daily.allTimeBoard()
+  });
 });
 
 /**
  * Claim today's run and get a room to play it in.
  *
  * The rules the mode rests on are all enforced right here, on the server, where
- * the client cannot reach them: you must be signed in, you get one *finished*
- * run per day, and the songs come from daily.challenge() rather than from
- * anything the request asked for.
+ * the client cannot reach them: you must be signed in, you get one run per day
+ * -- finished, or walked out of (see Room.abandonDaily) -- and the songs come
+ * from daily.challenge() rather than from anything the request asked for.
  */
 app.post('/api/daily/start', async (req, res) => {
   if (!auth.configured()) {
@@ -230,13 +250,11 @@ app.post('/api/daily/start', async (req, res) => {
     return res.status(409).json({ error: "You've already played today's challenge." });
   }
 
-  // Resume beats restart unless the player explicitly asked to start over --
-  // the common case for hitting this twice is a stray refresh, not a decision.
+  // A run already under way is the only run there is: hand it back. There is
+  // no starting over -- a fresh room would be a second go at songs the player
+  // has already heard.
   const live = liveDailyRoom(day, user.id);
-  if (live && !(req.body && req.body.restart)) {
-    return res.json({ code: live.code, resumed: true });
-  }
-  if (live) live.destroy();
+  if (live) return res.json({ code: live.code, resumed: true });
 
   let tracks;
   try {
