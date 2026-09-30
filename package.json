@@ -5,12 +5,23 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
+    "dev": "vite --config client/vite.config.mjs",
+    "build": "vite build --config client/vite.config.mjs",
     "build-packs": "node scripts/build-packs.js",
     "warm": "node server/warm.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "express": "^4.19.2",
     "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "socket.io-client": "^4.8.4",
+    "vite": "^8.3.1"
   }
 }

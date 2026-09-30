@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- resizes-content so an on-screen keyboard shortens the page instead of
+       sliding a full-height page up behind itself. Chrome honours it outright;
+       iOS ignores it, which is what the visual-viewport insets in
+       lib/viewport.js are for. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+  <title>MemoryBeat</title>
+  <meta name="description" content="Hear a clip. Name the song before anyone else. The faster you are, the more you score." />
+  <meta name="theme-color" content="#111014" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Martian+Mono:wght@400;600;800&family=Rethink+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <!-- Noto Music for the note glyphs, subset to just ♪ ♫ ♬ ♯ ♭ -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Music&display=block&text=%E2%99%AA%E2%99%AB%E2%99%AC%E2%99%AF%E2%99%AD" rel="stylesheet" />
+
+  <!-- the logo's three level bars, shrunk to 16px -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111014'/><rect x='7' y='15' width='5' height='10' rx='2.5' fill='%23FFD36B'/><rect x='13.5' y='6' width='5' height='19' rx='2.5' fill='%23FFEA00'/><rect x='20' y='11' width='5' height='14' rx='2.5' fill='%23FF7A2F'/></svg>" />
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

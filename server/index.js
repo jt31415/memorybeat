@@ -17,13 +17,17 @@ const auth = require('./auth');
 const daily = require('./daily');
 
 const PORT = process.env.PORT || 3000;
-const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+// The React client, built by `npm run build` (see client/vite.config.mjs). In
+// development Vite serves it instead and proxies back here for everything else.
+const CLIENT_DIR = path.join(__dirname, '..', 'client', 'dist');
+const CLIENT_INDEX = path.join(CLIENT_DIR, 'index.html');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { pingTimeout: 20000 });
 
-app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+// `index: false` so `/` goes through the page route below with the others.
+app.use(express.static(CLIENT_DIR, { index: false }));
 // A playlist URL is the only body this server takes, so the cap is tiny.
 app.use(express.json({ limit: '4kb' }));
 // Everything below can ask who is signed in via req.user (null when nobody is).
@@ -312,8 +316,18 @@ app.get('/api/room/:code', (req, res) => {
   });
 });
 
-/** Shareable room link: /r/ABCD */
-app.get('/r/:code', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'room.html')));
+/**
+ * The app's pages: the front door, the daily, and a shareable room link
+ * (/r/ABCD). All three are the same single page, which reads the path itself.
+ */
+function sendClient(_req, res) {
+  res.sendFile(CLIENT_INDEX, (err) => {
+    if (err) {
+      res.status(503).type('text').send('The client has not been built. Run `npm run build`.');
+    }
+  });
+}
+app.get(['/', '/daily', '/r/:code'], sendClient);
 
 /**
  * Audio proxy. The token is minted per round, so the client never learns the
