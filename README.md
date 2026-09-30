@@ -23,12 +23,26 @@ Kahoot-style decay, so an early guess is worth roughly twice a last-second one.
 ```bash
 npm install
 npm run build-packs   # populate the song database (required once)
+npm run build         # build the React client into client/dist
 npm start             # http://localhost:3000
 ```
 
 `build-packs` is not optional on a fresh clone — the database is not committed,
 and with no packs in it there is nothing to play. It takes about a minute for
-the decade packs.
+the decade packs. `build` is needed again whenever the client changes; the
+server answers every page with a note saying so until it has been run.
+
+For work on the client, run the game server and Vite side by side:
+
+```bash
+npm start      # the game server, :3000
+npm run dev    # the client with hot reload, http://localhost:5173
+```
+
+Vite proxies the API, audio, sign-in and the socket through to :3000. Discord
+sign-in builds its redirect from the host it was reached on, so to test the
+daily through Vite, register `http://localhost:5173/auth/discord/callback` with
+the Discord application too.
 
 Set `PORT` to use a different port. To play with friends over the internet,
 expose that port however you normally would (a tunnel like `ngrok http 3000`
@@ -455,20 +469,20 @@ scripts/
   build-packs.js      populates the database, computes popularity
   sources/wikipedia.js  Billboard year-end scraper
   sources/lastfm.js     genre tags and listener counts
-public/
-  index.html     main menu
-  room.html      lobby + game
-  daily.html     daily challenge: sign-in, play button, leaderboards
-  js/menu.js     front page; joins and creates rooms, configures nothing
-  js/room.js     game client, and every lobby control
-  js/daily.js    daily page; no socket, the game itself is an ordinary room
-  js/visualizer.js  canvas visualiser
-  css/style.css
+client/             React, built by Vite into client/dist
+  index.html          the one page; App.jsx picks home, daily or room by path
+  src/pages/          Home, Daily, Room
+  src/room/           useRoomSession.js (socket, audio, clock -- the whole
+                      round lifecycle), Lobby, Play, Final, Sidebar, JoinGate
+  src/lib/            Visualizer.js (canvas meter), hues, share line, storage
+  src/components/     wordmark, avatars, the music-glyph icons
+  src/styles.css      every style, tokens at the top
 ```
 
-Plain HTML/CSS/JS on the client — the only dependencies are Express and
-Socket.IO. The database uses `node:sqlite`, which ships with Node 22, so it adds
-no dependency and no native build step.
+The server's runtime dependencies are Express and Socket.IO; React, Vite and
+the Socket.IO client are build-time only, and the Docker image carries just the
+built files. The database uses `node:sqlite`, which ships with Node 22, so it
+adds no dependency and no native build step.
 
 ## Notes
 

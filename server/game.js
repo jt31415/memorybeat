@@ -1547,7 +1547,13 @@ class Room {
           score: p.score,
           correct: !!(a && a.correct),
           points: a ? a.points : 0,
-          answered: !!a
+          answered: !!a,
+          // Which card they took, now that the round is over and it gives
+          // nothing away -- the reveal shows who fell for which song. A right
+          // answer is filed by award() without its index, so it is the answer's.
+          pick: !a || !this.round.choices
+            ? null
+            : (a.correct ? this.round.choices.correct : (a.pick ?? null))
         };
       })
       .sort((a, b) => b.score - a.score);

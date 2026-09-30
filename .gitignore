@@ -12,3 +12,6 @@ data/state.db-wal
 
 # Deploy target (host, user) -- kept out of the repo. See deploy.env.example.
 deploy.env
+
+# Built client (npm run build).
+client/dist/

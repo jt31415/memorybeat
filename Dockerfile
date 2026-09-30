@@ -7,18 +7,25 @@
 # Docker Desktop loses its binfmt registration ("exec /bin/sh: exec format
 # error").
 #
-# This only works because every dependency is plain JavaScript (express,
-# socket.io), so node_modules built on x86 runs unchanged on arm64. A dependency
-# with a native addon would need its install moved back into the runtime stage.
+# This only works because every runtime dependency is plain JavaScript
+# (express, socket.io), so node_modules built on x86 runs unchanged on arm64. A
+# dependency with a native addon would need its install moved back into the
+# runtime stage. The client's build tools (Vite and friends) do carry native
+# binaries, but they only ever run here, on the build platform, and are pruned
+# before anything is copied across -- the runtime gets static files.
 
 # ------------------------------------------------------------------- build
 FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 
 WORKDIR /app
 
-# Dependencies first so the layer survives source-only changes.
+# Dependencies first so the layer survives source-only changes. All of them,
+# dev included, because the client is built in this stage.
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
+
+COPY client ./client
+RUN npm run build && npm prune --omit=dev
 
 # The song DB and the iTunes cache ship as a *seed*, not as the live data dir.
 # /app/data is a volume, so anything copied straight there would be shadowed on
@@ -41,7 +48,7 @@ WORKDIR /app
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY package.json package-lock.json ./
 COPY server ./server
-COPY public ./public
+COPY --from=build /app/client/dist ./client/dist
 COPY scripts ./scripts
 
 # Owned by node: a fresh named volume takes its ownership from this directory,
